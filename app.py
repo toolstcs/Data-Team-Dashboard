@@ -7,42 +7,65 @@
 
 import json
 import os
+import io
 from collections import OrderedDict
 from datetime import datetime
 
 import openpyxl
 import pandas as pd
+import requests
 import streamlit as st
 import streamlit.components.v1 as components
 
 # ╔══════════════════════════════════════════════════════════════╗
-# ║  CONFIGURE YOUR FILE PATHS HERE                             ║
-# ║  Update these paths to point to your actual data files.     ║
-# ║  The dashboard will skip any file that doesn't exist yet.   ║
+# ║  FILE CONFIGURATION                                         ║
+# ║  Files sit next to app.py (no subfolder needed).            ║
+# ║  The big HubSpot file auto-downloads from Google Drive.     ║
 # ╚══════════════════════════════════════════════════════════════╝
 
-DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
+APP_DIR = os.path.dirname(os.path.abspath(__file__))
 
-# CSV 1: Main HubSpot export (4L+ rows)
-# Columns used: TAG, Website URL, e-Commerce Technologies,
-#               Drupal Partners (CMS), ConversionBox Competitors, Email
-HUBSPOT_CSV = os.path.join(DATA_DIR, "hubspot_contacts.csv")
+# CSV 1: Main HubSpot export (auto-downloaded from Google Drive)
+HUBSPOT_GDRIVE_ID = "1iEJV-vbJuOxdBi_p_INBP8B43uOOCsAH"
+HUBSPOT_CSV = os.path.join(APP_DIR, "all-contacts.csv")
 
-# CSV 2: TCS email marketing
-# Columns: Email, Status (e.g. "TCS Opener" / "TCS Non-Opener")
-TCS_EMAIL_MKT_CSV = os.path.join(DATA_DIR, "tcs_email_marketing.csv")
+# CSV 2: TCS email marketing (uploaded to GitHub)
+TCS_EMAIL_MKT_CSV = os.path.join(APP_DIR, "Copy of TCS opener vs non opener - COMBINED LIST.csv")
 
-# CSV 3: BinaryWorks email marketing
-# Columns: Email, Status (e.g. "BinaryWorks Opener" / "BinaryWorks Non-Opener")
-BW_EMAIL_MKT_CSV = os.path.join(DATA_DIR, "binaryworks_email_marketing.csv")
+# CSV 3: BinaryWorks email marketing (uploaded to GitHub)
+BW_EMAIL_MKT_CSV = os.path.join(APP_DIR, "Copy of Drupal data cleaning - Sheet3.csv")
 
-# CSV 4: Individual contribution (Excel with 3 sheets)
-# Sheet names should contain person names (Kishore, Ilakkiya, Dharanshri)
-# Each sheet auto-detected: dates, counts, categories, links
-CONTRIBUTION_XLSX = os.path.join(DATA_DIR, "contribution.xlsx")
+# CSV 4: Individual contribution (uploaded to GitHub)
+CONTRIBUTION_XLSX = os.path.join(APP_DIR, "Copy of Over all DB .xlsx")
 
 # Future: Add more email marketing CSVs here
-# CB_EMAIL_MKT_CSV = os.path.join(DATA_DIR, "conversionbox_email_marketing.csv")
+# CB_EMAIL_MKT_CSV = os.path.join(APP_DIR, "conversionbox_email_marketing.csv")
+
+
+def download_from_gdrive(file_id, destination):
+    """Download a large file from Google Drive with confirmation."""
+    if os.path.exists(destination):
+        return  # Already downloaded
+
+    URL = "https://drive.google.com/uc?export=download"
+    session = requests.Session()
+
+    # First request to get confirmation token
+    response = session.get(URL, params={"id": file_id}, stream=True)
+    token = None
+    for key, value in response.cookies.items():
+        if key.startswith("download_warning"):
+            token = value
+            break
+
+    if token:
+        response = session.get(URL, params={"id": file_id, "confirm": token}, stream=True)
+
+    # Write to file
+    with open(destination, "wb") as f:
+        for chunk in response.iter_content(32768):
+            if chunk:
+                f.write(chunk)
 
 # ╔══════════════════════════════════════════════════════════════╗
 # ║  BRAND TAG MAPPING                                          ║
@@ -563,7 +586,11 @@ def load_all_data():
         "persons": {},
     }
 
-    # Load HubSpot data
+    # Load HubSpot data (download from Google Drive if needed)
+    if not os.path.exists(HUBSPOT_CSV):
+        with st.spinner("Downloading HubSpot data from Google Drive (first time only)..."):
+            download_from_gdrive(HUBSPOT_GDRIVE_ID, HUBSPOT_CSV)
+
     hub = load_hubspot(HUBSPOT_CSV)
     if hub:
         for brand in ["tcs", "drupal", "conversionbox"]:
