@@ -436,7 +436,7 @@ def parse_contribution(xlsx_path):
             # Detect month header rows
             is_month_header = False
             for mn in MONTH_NAMES:
-                if cell0.lower().startswith(mn) and ("month" in cell0.lower() or "data" in cell0.lower()):
+                if cell0.lower().startswith(mn) and ("month" in cell0.lower() or "data" in cell0.lower() or "count" in cell0.lower()):
                     current_month_key = mn.capitalize()
                     is_month_header = True
                     break
