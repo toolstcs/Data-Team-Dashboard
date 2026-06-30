@@ -80,11 +80,13 @@ def download_from_gdrive(file_id, destination):
 BRAND_TAGS = {
     "TCS": "tcs",
     "BinaryWorks": "drupal",
+    "Drupal": "drupal",
     "ConversionBox": "conversionbox",
+    "conversionbox compitetor": "conversionbox",
 }
 
 # Tags that go under "Others" tab (cards with just leads + websites)
-OTHERS_TAGS = ["Manufacturing", "ConversionBox 200+ Products", "Higher Education", "Finance"]
+OTHERS_TAGS = ["manufacturing", "Conversionbox 200+ products", "Higher education", "Fin tech"]
 
 # TCS technologies to show individually (rest become "Other Technologies")
 TCS_MAIN_TECHS = ["Shopify", "BigCommerce", "WooCommerce", "Magento", "Shopify Plus"]
@@ -206,13 +208,25 @@ def load_hubspot(path):
     tcs_tech_counts = {}
     tcs_websites = {}
 
+    # Build case-insensitive lookup for main techs
+    tcs_tech_map = {t.lower(): t for t in TCS_MAIN_TECHS}
+
     for _, row in tcs_df.iterrows():
-        tech = safe_str(row.get(col_map.get("ecom_tech", ""), ""))
+        tech_raw = safe_str(row.get(col_map.get("ecom_tech", ""), ""))
         email = safe_str(row.get(col_map.get("email", ""), ""))
         website = safe_str(row.get(col_map.get("website_url", ""), ""))
-        if not tech:
+
+        # Case-insensitive matching
+        tech_lower = tech_raw.lower().strip()
+        if not tech_raw or tech_lower == "":
             tech = "Other Technologies"
-        elif tech not in TCS_MAIN_TECHS:
+        elif tech_lower in tcs_tech_map:
+            tech = tcs_tech_map[tech_lower]
+        elif tech_lower.replace(" ", "") in {t.lower().replace(" ", ""): t for t in TCS_MAIN_TECHS}:
+            # Handle "Woo Commerce" vs "WooCommerce", "Big Commerce" vs "BigCommerce"
+            no_space_map = {t.lower().replace(" ", ""): t for t in TCS_MAIN_TECHS}
+            tech = no_space_map[tech_lower.replace(" ", "")]
+        else:
             tech = "Other Technologies"
 
         if tech not in tcs_tech_counts:
@@ -240,16 +254,23 @@ def load_hubspot(path):
     }
 
     # Build Drupal breakdown
-    drupal_df = df[df[col_map.get("tag", "")].apply(lambda x: safe_str(x)) == "BinaryWorks"]
+    drupal_df = df[df[col_map.get("tag", "")].apply(lambda x: safe_str(x)).isin(["BinaryWorks", "Drupal"])]
     drupal_counts = {}
 
+    # Build case-insensitive lookup for Drupal categories
+    drupal_cat_map = {c.lower(): c for c in DRUPAL_MAIN_CATS}
+
     for _, row in drupal_df.iterrows():
-        cat = safe_str(row.get(col_map.get("drupal_cms", ""), ""))
+        cat_raw = safe_str(row.get(col_map.get("drupal_cms", ""), ""))
         email = safe_str(row.get(col_map.get("email", ""), ""))
         website = safe_str(row.get(col_map.get("website_url", ""), ""))
-        if not cat:
+
+        cat_lower = cat_raw.lower().strip()
+        if not cat_raw or cat_lower == "":
             cat = "Other CMS"
-        elif cat not in DRUPAL_MAIN_CATS:
+        elif cat_lower in drupal_cat_map:
+            cat = drupal_cat_map[cat_lower]
+        else:
             cat = "Other CMS"
 
         if cat not in drupal_counts:
@@ -438,14 +459,24 @@ def parse_contribution(xlsx_path):
             elif hl in ("technology", "domain name", "domain", "category"):
                 category_col = i
 
-        # If no header matched, try positional detection
+        # If no count column found, assume format: col0=category/label, col1=count
+        # (Kishore-style: category in first column, number in second)
         if count_col is None:
-            for i, h in enumerate(header):
-                if h is None:
-                    continue
-                hl = str(h).strip().lower()
-                if "count" in hl:
-                    count_col = i
+            # Try to find any column with numeric data in first few data rows
+            for test_row in all_rows[1:min(20, len(all_rows))]:
+                for i, val in enumerate(test_row):
+                    if val is None:
+                        continue
+                    try:
+                        float(val)
+                        count_col = i
+                        # The column before it is likely the category
+                        if i > 0 and category_col is None:
+                            category_col = 0
+                        break
+                    except (ValueError, TypeError):
+                        continue
+                if count_col is not None:
                     break
 
         # Parse data rows
@@ -469,13 +500,14 @@ def parse_contribution(xlsx_path):
                     months[current_month_key] = {"entries": []}
                 continue
 
-            # Skip total/summary rows
-            if cell0.lower() in ("total count", "total", "summary", ""):
-                # Try to catch total rows
-                if cell0.lower() in ("total count", "total"):
-                    continue
-                if all(v is None for v in row):
-                    continue
+            # Skip total/summary/header rows
+            skip_words = ("total count", "total", "summary", "dashboard", "file:", "http", " count ")
+            if cell0.lower() in ("total count", "total", ""):
+                continue
+            if any(cell0.lower().startswith(sw) for sw in ("summary", "dashboard", "file:")):
+                continue
+            if all(v is None for v in row):
+                continue
 
             # Try to extract count
             count_val = None
@@ -557,15 +589,21 @@ def parse_contribution(xlsx_path):
         if person_months:
             # Derive person name from sheet name
             name = sheet_name.strip()
+            is_person = False
             # Try to extract a clean name
             for check in ["kishore", "ilakkiya", "illakkia", "dharanshri", "dharanishri"]:
                 if check in name.lower():
                     name = check.capitalize()
+                    is_person = True
                     if name == "Illakkia":
                         name = "Ilakkiya"
                     if name == "Dharanishri":
                         name = "Dharanshri"
                     break
+
+            # Only include sheets that match a person name
+            if not is_person:
+                continue
 
             persons[name.lower().replace(" ", "_")] = {
                 "name": name,
