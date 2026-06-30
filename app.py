@@ -126,238 +126,184 @@ def safe_str(val):
     return str(val).strip()
 
 
+@st.cache_data(show_spinner="Loading HubSpot data (4L+ rows)...")
 def load_hubspot(path):
-    """Load main HubSpot CSV and build brand data."""
+    """Load main HubSpot CSV using fast pandas operations."""
     if not os.path.exists(path):
         return None
 
+    # Read only needed columns
     df = pd.read_csv(path, low_memory=False)
 
-    # Normalize column names (handle slight variations)
+    # Normalize column names
     col_map = {}
     for c in df.columns:
         cl = c.strip().lower()
-        if cl == "tag":
-            col_map["tag"] = c
-        elif cl == "email":
-            col_map["email"] = c
-        elif cl == "website url":
-            col_map["website_url"] = c
-        elif "e-commerce" in cl or "ecommerce" in cl:
-            col_map["ecom_tech"] = c
-        elif "drupal" in cl and "cms" in cl:
-            col_map["drupal_cms"] = c
-        elif "conversionbox" in cl and "competitor" in cl:
-            col_map["cb_competitors"] = c
+        if cl == "tag": col_map["tag"] = c
+        elif cl == "email": col_map["email"] = c
+        elif cl == "website url": col_map["website_url"] = c
+        elif "e-commerce" in cl or "ecommerce" in cl: col_map["ecom_tech"] = c
+        elif "drupal" in cl and "cms" in cl: col_map["drupal_cms"] = c
+        elif "conversionbox" in cl and "competitor" in cl: col_map["cb_competitors"] = c
 
     if "email" not in col_map or "tag" not in col_map:
         st.error(f"HubSpot CSV must have 'Email' and 'TAG' columns. Found: {list(df.columns)}")
         return None
 
-    result = {
-        "tcs": {"rows": [], "totals": {"leads": 0, "websites": 0}, "emails": set()},
-        "drupal": {"rows": [], "totals": {"leads": 0, "websites": 0}, "emails": set()},
-        "conversionbox": {"rows": [], "totals": {"leads": 0, "websites": 0}, "emails": set()},
-        "others": {},
-        "overlap": {},
-    }
+    # Clean columns once (vectorized, fast)
+    tag_col = col_map["tag"]
+    email_col = col_map["email"]
+    web_col = col_map.get("website_url", "")
+    ecom_col = col_map.get("ecom_tech", "")
+    drupal_col = col_map.get("drupal_cms", "")
+    cb_col = col_map.get("cb_competitors", "")
 
-    # Track which emails belong to which brands
-    email_brands = {}
+    df[tag_col] = df[tag_col].fillna("").astype(str).str.strip()
+    df[email_col] = df[email_col].fillna("").astype(str).str.strip()
+    if web_col: df[web_col] = df[web_col].fillna("").astype(str).str.strip()
+    if ecom_col: df[ecom_col] = df[ecom_col].fillna("").astype(str).str.strip()
+    if drupal_col: df[drupal_col] = df[drupal_col].fillna("").astype(str).str.strip()
+    if cb_col: df[cb_col] = df[cb_col].fillna("").astype(str).str.strip()
 
-    for _, row in df.iterrows():
-        tag = safe_str(row.get(col_map.get("tag", ""), ""))
-        email = safe_str(row.get(col_map.get("email", ""), ""))
-        website = safe_str(row.get(col_map.get("website_url", ""), ""))
-        ecom = safe_str(row.get(col_map.get("ecom_tech", ""), ""))
-        drupal = safe_str(row.get(col_map.get("drupal_cms", ""), ""))
-        cb = safe_str(row.get(col_map.get("cb_competitors", ""), ""))
+    # Filter rows with email
+    df = df[df[email_col] != ""]
 
-        if not email:
-            continue
+    # ── Brand mapping (vectorized) ──
+    brand_map = {t: b for t, b in BRAND_TAGS.items()}
+    df["_brand"] = df[tag_col].map(brand_map).fillna("")
 
-        # Track email -> brands for overlap
-        if email not in email_brands:
-            email_brands[email] = set()
-
-        # TCS
-        if tag in BRAND_TAGS and BRAND_TAGS[tag] == "tcs":
-            result["tcs"]["emails"].add(email)
-            email_brands[email].add("tcs")
-
-        # BinaryWorks
-        if tag in BRAND_TAGS and BRAND_TAGS[tag] == "drupal":
-            result["drupal"]["emails"].add(email)
-            email_brands[email].add("drupal")
-
-        # ConversionBox
-        if tag in BRAND_TAGS and BRAND_TAGS[tag] == "conversionbox":
-            result["conversionbox"]["emails"].add(email)
-            email_brands[email].add("conversionbox")
-
-        # Others
-        if tag in OTHERS_TAGS:
-            if tag not in result["others"]:
-                result["others"][tag] = {"emails": set(), "websites": set()}
-            result["others"][tag]["emails"].add(email)
-            if website:
-                result["others"][tag]["websites"].add(website)
-
-    # Build TCS technology breakdown
-    tcs_df = df[df[col_map.get("tag", "")].apply(lambda x: safe_str(x)) == "TCS"]
-    tcs_tech_counts = {}
-    tcs_websites = {}
-
-    # Build case-insensitive lookup for main techs
+    # ── TCS breakdown ──
+    tcs_df = df[df["_brand"] == "tcs"].copy()
     tcs_tech_map = {t.lower(): t for t in TCS_MAIN_TECHS}
+    tcs_nospace_map = {t.lower().replace(" ", ""): t for t in TCS_MAIN_TECHS}
 
-    for _, row in tcs_df.iterrows():
-        tech_raw = safe_str(row.get(col_map.get("ecom_tech", ""), ""))
-        email = safe_str(row.get(col_map.get("email", ""), ""))
-        website = safe_str(row.get(col_map.get("website_url", ""), ""))
+    def map_tcs_tech(val):
+        v = val.lower().strip()
+        if not v: return "Other Technologies"
+        if v in tcs_tech_map: return tcs_tech_map[v]
+        vns = v.replace(" ", "")
+        if vns in tcs_nospace_map: return tcs_nospace_map[vns]
+        return "Other Technologies"
 
-        # Case-insensitive matching
-        tech_lower = tech_raw.lower().strip()
-        if not tech_raw or tech_lower == "":
-            tech = "Other Technologies"
-        elif tech_lower in tcs_tech_map:
-            tech = tcs_tech_map[tech_lower]
-        elif tech_lower.replace(" ", "") in {t.lower().replace(" ", ""): t for t in TCS_MAIN_TECHS}:
-            # Handle "Woo Commerce" vs "WooCommerce", "Big Commerce" vs "BigCommerce"
-            no_space_map = {t.lower().replace(" ", ""): t for t in TCS_MAIN_TECHS}
-            tech = no_space_map[tech_lower.replace(" ", "")]
-        else:
-            tech = "Other Technologies"
+    if ecom_col and len(tcs_df) > 0:
+        tcs_df["_tech"] = tcs_df[ecom_col].apply(map_tcs_tech)
+    else:
+        tcs_df["_tech"] = "Other Technologies"
 
-        if tech not in tcs_tech_counts:
-            tcs_tech_counts[tech] = {"leads": 0, "websites": set(), "emails": set()}
-        if email:
-            tcs_tech_counts[tech]["leads"] += 1
-            tcs_tech_counts[tech]["emails"].add(email)
-        if website:
-            tcs_tech_counts[tech]["websites"].add(website)
+    tcs_grouped = tcs_df.groupby("_tech").agg(
+        leads=(email_col, "count"),
+        websites=(web_col, "nunique") if web_col else (email_col, "count"),
+    ).reset_index()
+
+    tcs_email_sets = {tech: set(grp[email_col].tolist()) for tech, grp in tcs_df.groupby("_tech")}
 
     tcs_rows = []
     for tech in TCS_MAIN_TECHS + ["Other Technologies"]:
-        if tech in tcs_tech_counts:
-            d = tcs_tech_counts[tech]
+        match = tcs_grouped[tcs_grouped["_tech"] == tech]
+        if len(match) > 0:
             tcs_rows.append({
                 "label": tech,
-                "leads": d["leads"],
-                "websites": len(d["websites"]),
-                "emails": list(d["emails"]),
+                "leads": int(match["leads"].iloc[0]),
+                "websites": int(match["websites"].iloc[0]),
+                "emails": list(tcs_email_sets.get(tech, set())),
             })
-    result["tcs"]["rows"] = tcs_rows
-    result["tcs"]["totals"] = {
-        "leads": sum(r["leads"] for r in tcs_rows),
-        "websites": len(set().union(*(set(tcs_tech_counts[t]["websites"]) for t in tcs_tech_counts))) if tcs_tech_counts else 0,
-    }
 
-    # Build Drupal breakdown
-    drupal_df = df[df[col_map.get("tag", "")].apply(lambda x: safe_str(x)).isin(["BinaryWorks", "Drupal"])]
-    drupal_counts = {}
+    tcs_totals = {"leads": sum(r["leads"] for r in tcs_rows), "websites": int(tcs_df[web_col].nunique()) if web_col else 0}
 
-    # Build case-insensitive lookup for Drupal categories
+    # ── BinaryWorks breakdown ──
+    drupal_df = df[df[tag_col].isin(["BinaryWorks", "Drupal"])].copy()
     drupal_cat_map = {c.lower(): c for c in DRUPAL_MAIN_CATS}
 
-    for _, row in drupal_df.iterrows():
-        cat_raw = safe_str(row.get(col_map.get("drupal_cms", ""), ""))
-        email = safe_str(row.get(col_map.get("email", ""), ""))
-        website = safe_str(row.get(col_map.get("website_url", ""), ""))
+    def map_drupal_cat(val):
+        v = val.lower().strip()
+        if not v: return "Other CMS"
+        if v in drupal_cat_map: return drupal_cat_map[v]
+        return "Other CMS"
 
-        cat_lower = cat_raw.lower().strip()
-        if not cat_raw or cat_lower == "":
-            cat = "Other CMS"
-        elif cat_lower in drupal_cat_map:
-            cat = drupal_cat_map[cat_lower]
-        else:
-            cat = "Other CMS"
+    if drupal_col and len(drupal_df) > 0:
+        drupal_df["_cat"] = drupal_df[drupal_col].apply(map_drupal_cat)
+    else:
+        drupal_df["_cat"] = "Other CMS"
 
-        if cat not in drupal_counts:
-            drupal_counts[cat] = {"leads": 0, "websites": set(), "emails": set()}
-        if email:
-            drupal_counts[cat]["leads"] += 1
-            drupal_counts[cat]["emails"].add(email)
-        if website:
-            drupal_counts[cat]["websites"].add(website)
+    drupal_grouped = drupal_df.groupby("_cat").agg(
+        leads=(email_col, "count"),
+        websites=(web_col, "nunique") if web_col else (email_col, "count"),
+    ).reset_index()
+
+    drupal_email_sets = {cat: set(grp[email_col].tolist()) for cat, grp in drupal_df.groupby("_cat")}
 
     drupal_rows = []
     for cat in DRUPAL_MAIN_CATS + ["Other CMS"]:
-        if cat in drupal_counts:
-            d = drupal_counts[cat]
+        match = drupal_grouped[drupal_grouped["_cat"] == cat]
+        if len(match) > 0:
             drupal_rows.append({
                 "label": cat,
-                "leads": d["leads"],
-                "websites": len(d["websites"]),
-                "emails": list(d["emails"]),
+                "leads": int(match["leads"].iloc[0]),
+                "websites": int(match["websites"].iloc[0]),
+                "emails": list(drupal_email_sets.get(cat, set())),
             })
-    result["drupal"]["rows"] = drupal_rows
-    result["drupal"]["totals"] = {
-        "leads": sum(r["leads"] for r in drupal_rows),
-        "websites": len(set().union(*(set(drupal_counts[t]["websites"]) for t in drupal_counts))) if drupal_counts else 0,
-    }
 
-    # Build ConversionBox breakdown (show all values as-is)
-    cb_df = df[df[col_map.get("tag", "")].apply(lambda x: safe_str(x)) == "ConversionBox"]
-    cb_counts = {}
+    drupal_totals = {"leads": sum(r["leads"] for r in drupal_rows), "websites": int(drupal_df[web_col].nunique()) if web_col else 0}
 
-    for _, row in cb_df.iterrows():
-        comp = safe_str(row.get(col_map.get("cb_competitors", ""), ""))
-        email = safe_str(row.get(col_map.get("email", ""), ""))
-        website = safe_str(row.get(col_map.get("website_url", ""), ""))
-        if not comp:
-            comp = "Unspecified"
+    # ── ConversionBox breakdown ──
+    cb_df = df[df["_brand"] == "conversionbox"].copy()
+    if cb_col and len(cb_df) > 0:
+        cb_df["_comp"] = cb_df[cb_col].replace("", "Unspecified")
+    else:
+        cb_df["_comp"] = "Unspecified"
 
-        if comp not in cb_counts:
-            cb_counts[comp] = {"leads": 0, "websites": set(), "emails": set()}
-        if email:
-            cb_counts[comp]["leads"] += 1
-            cb_counts[comp]["emails"].add(email)
-        if website:
-            cb_counts[comp]["websites"].add(website)
+    cb_grouped = cb_df.groupby("_comp").agg(
+        leads=(email_col, "count"),
+        websites=(web_col, "nunique") if web_col else (email_col, "count"),
+    ).reset_index().sort_values("leads", ascending=False)
 
-    cb_rows = sorted(
-        [{"label": k, "leads": v["leads"], "websites": len(v["websites"]), "emails": list(v["emails"])}
-         for k, v in cb_counts.items()],
-        key=lambda x: x["leads"], reverse=True
-    )
-    result["conversionbox"]["rows"] = cb_rows
-    result["conversionbox"]["totals"] = {
-        "leads": sum(r["leads"] for r in cb_rows),
-        "websites": len(set().union(*(set(cb_counts[t]["websites"]) for t in cb_counts))) if cb_counts else 0,
-    }
+    cb_email_sets = {comp: set(grp[email_col].tolist()) for comp, grp in cb_df.groupby("_comp")}
 
-    # Build Others data
+    cb_rows = []
+    for _, r in cb_grouped.iterrows():
+        cb_rows.append({
+            "label": r["_comp"],
+            "leads": int(r["leads"]),
+            "websites": int(r["websites"]),
+            "emails": list(cb_email_sets.get(r["_comp"], set())),
+        })
+
+    cb_totals = {"leads": sum(r["leads"] for r in cb_rows), "websites": int(cb_df[web_col].nunique()) if web_col else 0}
+
+    # ── Others (vectorized) ──
     others_data = []
     for tag in OTHERS_TAGS:
-        if tag in result["others"]:
-            d = result["others"][tag]
+        tag_df = df[df[tag_col] == tag]
+        if len(tag_df) > 0:
             others_data.append({
                 "label": tag,
-                "leads": len(d["emails"]),
-                "websites": len(d["websites"]),
+                "leads": len(tag_df),
+                "websites": int(tag_df[web_col].nunique()) if web_col else 0,
             })
-    result["others"] = others_data
 
-    # Build overlap data
+    # ── Overlap (vectorized) ──
     overlap = {"tcs": {}, "drupal": {}, "conversionbox": {}}
-    for email, brands in email_brands.items():
-        if len(brands) > 1:
-            for b in brands:
-                for other in brands:
-                    if other != b:
-                        if other not in overlap[b]:
-                            overlap[b][other] = 0
-                        overlap[b][other] += 1
-    result["overlap"] = overlap
+    tcs_emails = set(tcs_df[email_col]) if len(tcs_df) > 0 else set()
+    drupal_emails = set(drupal_df[email_col]) if len(drupal_df) > 0 else set()
+    cb_emails = set(cb_df[email_col]) if len(cb_df) > 0 else set()
 
-    # Clean emails from rows (convert sets for JSON)
-    for brand in ["tcs", "drupal", "conversionbox"]:
-        result[brand]["emails"] = list(result[brand]["emails"])
-        for row in result[brand]["rows"]:
-            row["emails"] = list(row.get("emails", []))
+    brand_email_sets = {"tcs": tcs_emails, "drupal": drupal_emails, "conversionbox": cb_emails}
+    brand_names = {"tcs": "tcs", "drupal": "drupal", "conversionbox": "conversionbox"}
 
-    return result
+    for b1 in brand_names:
+        for b2 in brand_names:
+            if b1 != b2:
+                common = len(brand_email_sets[b1] & brand_email_sets[b2])
+                if common > 0:
+                    overlap[b1][b2] = common
+
+    return {
+        "tcs": {"rows": tcs_rows, "totals": tcs_totals, "emails": list(tcs_emails)},
+        "drupal": {"rows": drupal_rows, "totals": drupal_totals, "emails": list(drupal_emails)},
+        "conversionbox": {"rows": cb_rows, "totals": cb_totals, "emails": list(cb_emails)},
+        "others": others_data,
+        "overlap": overlap,
+    }
 
 
 def load_email_marketing(csv_path, brand_emails_by_tech):
