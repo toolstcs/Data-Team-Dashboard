@@ -134,7 +134,6 @@ def safe_str(val):
     return str(val).strip()
 
 
-@st.cache_data(show_spinner="Loading HubSpot data (4L+ rows)...")
 def load_hubspot(path):
     """Load main HubSpot CSV using fast pandas operations."""
     if not os.path.exists(path):
@@ -176,9 +175,20 @@ def load_hubspot(path):
     # Filter rows with email
     df = df[df[email_col] != ""]
 
-    # ── Brand mapping (vectorized) ──
-    brand_map = {t: b for t, b in BRAND_TAGS.items()}
-    df["_brand"] = df[tag_col].map(brand_map).fillna("")
+    # Debug: show TAG distribution in sidebar
+    tag_counts = df[tag_col].value_counts().head(10)
+    st.sidebar.write(f"**Total rows:** {len(df):,}")
+    st.sidebar.write("**TAG distribution:**")
+    st.sidebar.dataframe(tag_counts, use_container_width=True)
+
+    # ── Brand mapping (case-insensitive) ──
+    brand_map = {t.lower().strip(): b for t, b in BRAND_TAGS.items()}
+    df["_brand"] = df[tag_col].str.lower().str.strip().map(brand_map).fillna("")
+
+    # Debug: show brand counts
+    brand_counts = df["_brand"].value_counts()
+    st.sidebar.write("**Brand mapping result:**")
+    st.sidebar.dataframe(brand_counts, use_container_width=True)
 
     # ── TCS breakdown ──
     tcs_df = df[df["_brand"] == "tcs"].copy()
@@ -219,7 +229,7 @@ def load_hubspot(path):
     tcs_totals = {"leads": sum(r["leads"] for r in tcs_rows), "websites": int(tcs_df[web_col].nunique()) if web_col else 0}
 
     # ── BinaryWorks breakdown ──
-    drupal_df = df[df[tag_col].isin(["BinaryWorks", "Drupal"])].copy()
+    drupal_df = df[df[tag_col].str.lower().str.strip().isin(["binaryworks", "drupal"])].copy()
     drupal_cat_map = {c.lower(): c for c in DRUPAL_MAIN_CATS}
 
     def map_drupal_cat(val):
@@ -280,14 +290,17 @@ def load_hubspot(path):
 
     # ── Others (vectorized) ──
     others_data = []
-    for tag in OTHERS_TAGS:
-        tag_df = df[df[tag_col] == tag]
-        if len(tag_df) > 0:
-            others_data.append({
-                "label": tag,
-                "leads": len(tag_df),
-                "websites": int(tag_df[web_col].nunique()) if web_col else 0,
-            })
+    others_lower = {t.lower(): t for t in OTHERS_TAGS}
+    for _, tag_val in df[tag_col].drop_duplicates().items():
+        tag_lower = str(tag_val).lower().strip()
+        if tag_lower in others_lower:
+            tag_df = df[df[tag_col].str.lower().str.strip() == tag_lower]
+            if len(tag_df) > 0:
+                others_data.append({
+                    "label": others_lower[tag_lower],
+                    "leads": len(tag_df),
+                    "websites": int(tag_df[web_col].nunique()) if web_col else 0,
+                })
 
     # ── Overlap (vectorized) ──
     overlap = {"tcs": {}, "drupal": {}, "conversionbox": {}}
