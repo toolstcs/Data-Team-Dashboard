@@ -43,29 +43,33 @@ CONTRIBUTION_XLSX = os.path.join(APP_DIR, "Copy of Over all DB .xlsx")
 
 
 def download_from_gdrive(file_id, destination):
-    """Download a large file from Google Drive with confirmation."""
+    """Download a large file from Google Drive with virus scan confirmation."""
     if os.path.exists(destination):
         return  # Already downloaded
 
-    URL = "https://drive.google.com/uc?export=download"
+    # For large files, add confirm=t to bypass virus scan warning
+    URL = f"https://drive.google.com/uc?export=download&id={file_id}&confirm=t"
     session = requests.Session()
+    response = session.get(URL, stream=True)
 
-    # First request to get confirmation token
-    response = session.get(URL, params={"id": file_id}, stream=True)
-    token = None
-    for key, value in response.cookies.items():
-        if key.startswith("download_warning"):
-            token = value
-            break
+    # Verify we got actual data, not HTML
+    content_type = response.headers.get("content-type", "")
+    if "text/html" in content_type:
+        # Try alternative download URL
+        URL2 = f"https://drive.usercontent.google.com/download?id={file_id}&export=download&confirm=t"
+        response = session.get(URL2, stream=True)
 
-    if token:
-        response = session.get(URL, params={"id": file_id, "confirm": token}, stream=True)
-
-    # Write to file
     with open(destination, "wb") as f:
         for chunk in response.iter_content(32768):
             if chunk:
                 f.write(chunk)
+
+    # Verify downloaded file is not HTML
+    with open(destination, "r", errors="ignore") as f:
+        first_line = f.readline(200)
+    if first_line.strip().startswith("<!DOCTYPE") or first_line.strip().startswith("<html"):
+        os.remove(destination)
+        raise Exception("Google Drive download failed. Make sure the file sharing is set to 'Anyone with the link'.")
 
 # ╔══════════════════════════════════════════════════════════════╗
 # ║  BRAND TAG MAPPING                                          ║
