@@ -44,8 +44,16 @@ CONTRIBUTION_XLSX = os.path.join(APP_DIR, "Copy of Over all DB .xlsx")
 
 def download_from_gdrive(file_id, destination):
     """Download a large file from Google Drive with virus scan confirmation."""
+    # Check if file exists AND is valid (not HTML from failed download)
     if os.path.exists(destination):
-        return  # Already downloaded
+        with open(destination, "r", errors="ignore") as f:
+            first_line = f.readline(200)
+        if not first_line.strip().startswith("<!DOCTYPE") and not first_line.strip().startswith("<html"):
+            if os.path.getsize(destination) > 1000:
+                return  # File exists and is valid
+
+        # Invalid file, delete and re-download
+        os.remove(destination)
 
     # For large files, add confirm=t to bypass virus scan warning
     URL = f"https://drive.google.com/uc?export=download&id={file_id}&confirm=t"
@@ -565,7 +573,7 @@ def load_all_data():
     """Load all data sources."""
     data = {
         "brands": {
-            "tcs": {"name": "TheCommerceShop", "colLabel": "Technology", "rows": [], "totals": {"leads": 0, "websites": 0}},
+            "tcs": {"name": "CommerceShop", "colLabel": "Technology", "rows": [], "totals": {"leads": 0, "websites": 0}},
             "drupal": {"name": "BinaryWorks", "colLabel": "Category", "rows": [], "totals": {"leads": 0, "websites": 0}},
             "conversionbox": {"name": "ConversionBox", "colLabel": "Technology", "rows": [], "totals": {"leads": 0, "websites": 0}},
         },
