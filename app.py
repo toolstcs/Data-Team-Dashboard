@@ -133,7 +133,7 @@ def load_hubspot(path):
         return None
 
     # Read only needed columns
-    df = pd.read_csv(path, low_memory=False)
+    df = pd.read_csv(path, low_memory=False, on_bad_lines='skip')
 
     # Normalize column names
     col_map = {}
@@ -311,7 +311,7 @@ def load_email_marketing(csv_path, brand_emails_by_tech):
     if not os.path.exists(csv_path):
         return None
 
-    df = pd.read_csv(csv_path, low_memory=False)
+    df = pd.read_csv(csv_path, low_memory=False, on_bad_lines='skip')
 
     # Find email and status columns
     email_col = None
