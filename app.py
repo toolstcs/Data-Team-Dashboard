@@ -19,7 +19,13 @@ HUBSPOT_GDRIVE_ID = "1iEJV-vbJuOxdBi_p_INBP8B43uOOCsAH"
 HUBSPOT_CSV = os.path.join(APP_DIR, "all-contacts.csv")
 TCS_EMAIL_MKT_CSV = os.path.join(APP_DIR, "Copy of TCS opener vs non opener - COMBINED LIST.csv")
 BW_EMAIL_MKT_CSV = os.path.join(APP_DIR, "Copy of Drupal data cleaning - Sheet3.csv")
-CONTRIBUTION_XLSX = os.path.join(APP_DIR, "Copy of Over all DB .xlsx")
+CONTRIBUTION_XLSX = None  # Auto-detected below
+for fname in ["Copy of Over all DB .xlsx", "Copy of Over all DB.xlsx", "Copy_of_Over_all_DB.xlsx",
+              "Copy of Over all DB  .xlsx", "contribution.xlsx"]:
+    p = os.path.join(APP_DIR, fname)
+    if os.path.exists(p):
+        CONTRIBUTION_XLSX = p
+        break
 
 # Brand TAG mapping (all lowercase keys for case-insensitive matching)
 BRAND_TAGS = {"tcs": "tcs", "binaryworks": "drupal", "drupal": "drupal",
@@ -256,7 +262,7 @@ def load_email_mkt(csv_path, brand_rows):
 # PARSE CONTRIBUTION SHEETS
 # ════════════════════════════════════════
 def parse_contribution():
-    if not os.path.exists(CONTRIBUTION_XLSX): return {}
+    if not CONTRIBUTION_XLSX or not os.path.exists(CONTRIBUTION_XLSX): return {}
     wb = openpyxl.load_workbook(CONTRIBUTION_XLSX, data_only=True)
     persons = {}
 
