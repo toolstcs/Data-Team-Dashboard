@@ -124,7 +124,7 @@ def load_hubspot():
     # Brand map
     df["_brand"] = df["_tag_lower"].map(BRAND_TAGS).fillna("")
 
-    # ── TCS: any row with e-Commerce Technologies value ──
+    # ── TCS: rows where e-Commerce Technologies has a value ──
     tcs_df = df[df[ecom_c] != ""].copy() if ecom_c else pd.DataFrame()
     tcs_tech_lower = {t.lower(): t for t in TCS_MAIN_TECHS}
     tcs_nospace = {t.lower().replace(" ",""): t for t in TCS_MAIN_TECHS}
@@ -152,7 +152,7 @@ def load_hubspot():
                 tcs_rows.append({"label":tech,"leads":int(m["leads"].iloc[0]),"websites":int(m["websites"].iloc[0]),"emails":list(tcs_emails.get(tech,set()))})
 
     # ── Drupal/BinaryWorks ──
-    # ── BinaryWorks: any row with Drupal Partners (CMS) value ──
+    # ── BinaryWorks: rows where Drupal Partners (CMS) has a value ──
     drupal_df = df[df[drupal_c] != ""].copy() if drupal_c else pd.DataFrame()
 
     def map_cat(v):
@@ -185,7 +185,7 @@ def load_hubspot():
                 drupal_rows.append({"label":cat,"leads":int(m["leads"].iloc[0]),"websites":int(m["websites"].iloc[0]),"emails":list(drupal_emails.get(cat,set()))})
 
     # ── ConversionBox ──
-    # ── ConversionBox: any row with ConversionBox Competitors value ──
+    # ── ConversionBox: rows where ConversionBox Competitors has a value ──
     cb_df = df[df[cb_c] != ""].copy() if cb_c else pd.DataFrame()
     cb_rows = []
     if len(cb_df)>0:
