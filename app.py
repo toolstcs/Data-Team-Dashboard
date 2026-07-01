@@ -254,7 +254,6 @@ def parse_contribution():
                     "dharanshri":"Dharanshri","dharanishri":"Dharanshri"}
 
     for sn in wb.sheetnames:
-        # Check if this is a person sheet
         person_name = None
         for key, name in PERSON_NAMES.items():
             if key in sn.lower():
@@ -266,86 +265,121 @@ def parse_contribution():
         rows = [list(r) for r in ws.iter_rows(min_row=1, values_only=True)]
         if not rows: continue
 
-        # Find count column
-        count_col = cat_col = None
+        # Detect columns from header
         header = rows[0]
-        for i,h in enumerate(header):
+        month_col = count_col = cat_col = date_col = None
+
+        for i, h in enumerate(header):
             if h is None: continue
             hl = str(h).strip().lower()
-            if hl in ("count","lead count"," count "): count_col = i
-            elif hl in ("technology","domain name","domain","category"): cat_col = i
+            if hl == "month": month_col = i
+            elif hl in ("count", "lead count", " count "): count_col = i
+            elif hl in ("technology", "domain name", "domain", "category"): cat_col = i
+            elif hl in ("date", "date "): date_col = i
 
-        # Fallback: find first numeric column in data
+        # Fallback: find count column from data
         if count_col is None:
-            for tr in rows[1:min(25,len(rows))]:
-                for i,v in enumerate(tr):
+            for tr in rows[1:min(25, len(rows))]:
+                for i, v in enumerate(tr):
                     if v is None: continue
                     try:
                         float(v)
                         count_col = i
-                        if i>0 and cat_col is None: cat_col = 0
+                        if i > 0 and cat_col is None: cat_col = i - 1
+                        if cat_col is not None and cat_col > 0 and month_col is None: month_col = 0
                         break
                     except: continue
                 if count_col is not None: break
 
         if count_col is None: continue
 
-        # Parse rows
         months = OrderedDict()
-        current_month = None
 
-        for row in rows[1:]:
-            c0 = str(row[0]).strip() if row[0] else ""
-            c0_lower = c0.lower()
+        # ── FORMAT A: Has a Month column (e.g. "Jan", "Feb", "Mar") ──
+        if month_col is not None:
+            for row in rows[1:]:
+                # Get month
+                mv = row[month_col] if month_col < len(row) else None
+                if mv is None: continue
+                if isinstance(mv, datetime):
+                    month_key = mv.strftime("%b")
+                    date_str = mv.strftime("%b %d")
+                else:
+                    ms = str(mv).strip()
+                    if not ms: continue
+                    month_key = None
+                    for mn in MONTH_ORDER:
+                        if ms.lower().startswith(mn):
+                            month_key = mn.capitalize()
+                            break
+                    if not month_key: continue
+                    date_str = month_key
 
-            # Detect month header (matches "Jun month Data count", "Feb Count", "Mar data", etc.)
-            found_month = False
-            for mn in ["jan","feb","mar","apr","may","jun","jul","aug","sep","oct","nov","dec"]:
-                if c0_lower.startswith(mn) and any(w in c0_lower for w in ["month","data","count"]):
-                    current_month = mn.capitalize()
-                    if current_month not in months:
-                        months[current_month] = []
-                    found_month = True
-                    break
-            if found_month: continue
+                # Get count
+                try:
+                    count = int(float(row[count_col]))
+                except: continue
+                if count <= 0: continue
 
-            # Skip junk rows
-            if c0_lower in ("total count","total","") or c0_lower.startswith("summary") or c0_lower.startswith("file:") or c0_lower.startswith("dashboard"): continue
-            if all(v is None for v in row): continue
+                # Get category
+                category = "General"
+                if cat_col is not None and cat_col < len(row) and row[cat_col]:
+                    category = str(row[cat_col]).strip()
 
-            # Get count
-            try:
-                count = int(float(row[count_col]))
-            except: continue
-            if count <= 0: continue
+                # Get date from date column if available
+                if date_col is not None and date_col < len(row) and row[date_col]:
+                    dv = row[date_col]
+                    if isinstance(dv, datetime):
+                        date_str = dv.strftime("%b %d")
 
-            # Get category
-            category = "General"
-            if cat_col is not None and cat_col < len(row) and row[cat_col]:
-                category = str(row[cat_col]).strip()
-            elif cat_col is None and count_col == 1:
-                category = c0
-            if category.lower().strip() in ("conversionbox","conversionbox "): category = "ConversionBox"
+                if month_key not in months: months[month_key] = []
+                months[month_key].append({"date": date_str, "category": category, "count": count})
 
-            # Get date
-            date_str = ""
-            if isinstance(row[0], datetime):
-                mn_key = row[0].strftime("%b")
-                date_str = row[0].strftime("%b %d")
-                if current_month is None: current_month = mn_key
-                if mn_key not in months: months[mn_key] = []
-            elif current_month:
-                date_str = current_month
-            else:
-                continue
+        # ── FORMAT B: Month headers in data rows (e.g. "Jun month Data count") ──
+        else:
+            current_month = None
+            for row in rows[1:]:
+                c0 = str(row[0]).strip() if row[0] else ""
+                c0_lower = c0.lower()
 
-            target = current_month or "Unknown"
-            if target not in months: months[target] = []
-            months[target].append({"date": date_str, "category": category, "count": count})
+                # Detect month header
+                found = False
+                for mn in MONTH_ORDER:
+                    if c0_lower.startswith(mn) and any(w in c0_lower for w in ["month", "data", "count"]):
+                        current_month = mn.capitalize()
+                        if current_month not in months: months[current_month] = []
+                        found = True
+                        break
+                if found: continue
+
+                # Skip junk rows
+                if c0_lower in ("total count", "total", "") or c0_lower.startswith(("summary", "file:", "dashboard")): continue
+                if all(v is None for v in row): continue
+
+                try:
+                    count = int(float(row[count_col]))
+                except: continue
+                if count <= 0: continue
+
+                category = "General"
+                if cat_col is not None and cat_col < len(row) and row[cat_col]:
+                    category = str(row[cat_col]).strip()
+                elif count_col == 1:
+                    category = c0
+
+                if isinstance(row[0], datetime):
+                    mk = row[0].strftime("%b")
+                    ds = row[0].strftime("%b %d")
+                    if current_month is None: current_month = mk
+                    if mk not in months: months[mk] = []
+                    months[mk].append({"date": ds, "category": category, "count": count})
+                elif current_month:
+                    if current_month not in months: months[current_month] = []
+                    months[current_month].append({"date": current_month, "category": category, "count": count})
 
         # Build output (only valid months Jan-Jun)
         person_months = []
-        for mk in sorted([m for m in months if m in VALID_MONTHS], key=lambda m: MONTH_ORDER.get(m.lower()[:3],0), reverse=True):
+        for mk in sorted([m for m in months if m in VALID_MONTHS], key=lambda m: MONTH_ORDER.get(m.lower()[:3], 0), reverse=True):
             entries = months[mk]
             if entries:
                 person_months.append({"month": f"{mk} 2026", "total": sum(e["count"] for e in entries), "entries": entries})
