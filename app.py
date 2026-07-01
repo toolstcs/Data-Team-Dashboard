@@ -107,6 +107,14 @@ def load_hubspot():
         st.error(f"CSV needs Email and TAG columns. Found: {list(df.columns)[:10]}")
         return None
 
+    # Debug: show column detection results
+    st.sidebar.write(f"**Columns found:** {list(cols.keys())}")
+    st.sidebar.write(f"**Drupal col:** '{drupal_c}'")
+    if drupal_c and drupal_c in df.columns:
+        vals = df[drupal_c].replace("", pd.NA).dropna().head(20).tolist()
+        st.sidebar.write(f"**First 20 Drupal values:** {vals}")
+        st.sidebar.write(f"**Drupal non-empty rows:** {(df[drupal_c] != '').sum()}")
+
     tc, ec, wc = cols["tag"], cols["email"], cols.get("web","")
     ecom_c, drupal_c, cb_c = cols.get("ecom",""), cols.get("drupal",""), cols.get("cb","")
 
