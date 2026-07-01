@@ -118,8 +118,8 @@ def load_hubspot():
     # Brand map
     df["_brand"] = df["_tag_lower"].map(BRAND_TAGS).fillna("")
 
-    # ── TCS ──
-    tcs_df = df[df["_brand"] == "tcs"].copy()
+    # ── TCS: any row with e-Commerce Technologies value ──
+    tcs_df = df[df[ecom_c] != ""].copy() if ecom_c else pd.DataFrame()
     tcs_tech_lower = {t.lower(): t for t in TCS_MAIN_TECHS}
     tcs_nospace = {t.lower().replace(" ",""): t for t in TCS_MAIN_TECHS}
 
@@ -146,7 +146,8 @@ def load_hubspot():
                 tcs_rows.append({"label":tech,"leads":int(m["leads"].iloc[0]),"websites":int(m["websites"].iloc[0]),"emails":list(tcs_emails.get(tech,set()))})
 
     # ── Drupal/BinaryWorks ──
-    drupal_df = df[df["_tag_lower"].isin(["binaryworks","drupal"])].copy()
+    # ── BinaryWorks: any row with Drupal Partners (CMS) value ──
+    drupal_df = df[df[drupal_c] != ""].copy() if drupal_c else pd.DataFrame()
 
     def map_cat(v):
         vl = v.lower().strip()
@@ -178,7 +179,8 @@ def load_hubspot():
                 drupal_rows.append({"label":cat,"leads":int(m["leads"].iloc[0]),"websites":int(m["websites"].iloc[0]),"emails":list(drupal_emails.get(cat,set()))})
 
     # ── ConversionBox ──
-    cb_df = df[df["_brand"]=="conversionbox"].copy()
+    # ── ConversionBox: any row with ConversionBox Competitors value ──
+    cb_df = df[df[cb_c] != ""].copy() if cb_c else pd.DataFrame()
     cb_rows = []
     if len(cb_df)>0:
         if cb_c:
