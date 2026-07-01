@@ -130,11 +130,18 @@ def load_hubspot():
     tcs_nospace = {t.lower().replace(" ",""): t for t in TCS_MAIN_TECHS}
 
     def map_tech(v):
-        vl = v.lower().strip()
+        import re
+        vl = re.sub(r'\s+', ' ', v.lower().strip())
         if not vl: return "Other Technologies"
         if vl in tcs_tech_lower: return tcs_tech_lower[vl]
         vn = vl.replace(" ","")
         if vn in tcs_nospace: return tcs_nospace[vn]
+        # Flexible contains match
+        if "shopify plus" in vl: return "Shopify Plus"
+        if "shopify" in vl and "plus" not in vl: return "Shopify"
+        if "bigcommerce" in vl or "big commerce" in vl: return "BigCommerce"
+        if "woocommerce" in vl or "woo commerce" in vl: return "WooCommerce"
+        if "magento" in vl: return "Magento"
         return "Other Technologies"
 
     if ecom_c and len(tcs_df)>0:
@@ -156,15 +163,17 @@ def load_hubspot():
     drupal_df = df[df[drupal_c] != ""].copy() if drupal_c else pd.DataFrame()
 
     def map_cat(v):
-        vl = v.lower().strip()
+        import re
+        # Normalize: lowercase, strip, replace all whitespace types with regular space
+        vl = re.sub(r'\s+', ' ', v.lower().strip())
         if not vl: return "Other CMS"
-        # Drupal versions
+        # Drupal versions: match "drupal 7", "drupal7", "drupal 10", etc.
         for ver in ["7","8","9","10","11"]:
-            if vl == f"drupal {ver}" or vl.startswith(f"drupal {ver}."): return f"Drupal {ver}"
-        # Generic Drupal (no version)
-        if vl == "drupal": return "Drupal (Generic)"
-        # All WordPress versions combined
-        if vl.startswith("wordpress") or vl.startswith("wordpress"): return "WordPress"
+            if f"drupal {ver}" in vl or f"drupal{ver}" in vl: return f"Drupal {ver}"
+        # Generic Drupal
+        if vl == "drupal" or vl == "drupal ": return "Drupal (Generic)"
+        # All WordPress variants combined
+        if "wordpress" in vl or "word press" in vl: return "WordPress"
         # Everything else
         return "Other CMS"
 
