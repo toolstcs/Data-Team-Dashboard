@@ -147,13 +147,21 @@ def load_hubspot():
 
     # ── Drupal/BinaryWorks ──
     drupal_df = df[df["_tag_lower"].isin(["binaryworks","drupal"])].copy()
-    drupal_cat_lower = {c.lower(): c for c in DRUPAL_MAIN_CATS}
 
     def map_cat(v):
         vl = v.lower().strip()
         if not vl: return "Other CMS"
-        if vl in drupal_cat_lower: return drupal_cat_lower[vl]
+        # Drupal versions
+        for ver in ["7","8","9","10","11"]:
+            if vl == f"drupal {ver}" or vl.startswith(f"drupal {ver}."): return f"Drupal {ver}"
+        # Generic Drupal (no version)
+        if vl == "drupal": return "Drupal (Generic)"
+        # All WordPress versions combined
+        if vl.startswith("wordpress") or vl.startswith("wordpress"): return "WordPress"
+        # Everything else
         return "Other CMS"
+
+    DRUPAL_DISPLAY_ORDER = ["Drupal 7","Drupal 8","Drupal 9","Drupal 10","Drupal 11","Drupal (Generic)","WordPress","Other CMS"]
 
     if drupal_c and len(drupal_df)>0:
         drupal_df["_cat"] = drupal_df[drupal_c].apply(map_cat)
@@ -164,7 +172,7 @@ def load_hubspot():
     if len(drupal_df) > 0:
         dg = drupal_df.groupby("_cat").agg(leads=(ec,"count"), websites=(wc,"nunique") if wc else (ec,"count")).reset_index()
         drupal_emails = {c: set(g[ec]) for c,g in drupal_df.groupby("_cat")}
-        for cat in DRUPAL_MAIN_CATS + ["Other CMS"]:
+        for cat in DRUPAL_DISPLAY_ORDER:
             m = dg[dg["_cat"]==cat]
             if len(m)>0:
                 drupal_rows.append({"label":cat,"leads":int(m["leads"].iloc[0]),"websites":int(m["websites"].iloc[0]),"emails":list(drupal_emails.get(cat,set()))})
