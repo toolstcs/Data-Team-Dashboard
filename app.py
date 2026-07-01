@@ -87,9 +87,25 @@ def find_columns(df):
         if cl == "tag": m["tag"] = c
         elif cl == "email": m["email"] = c
         elif cl == "website url": m["web"] = c
-        elif "e-commerce" in cl or "ecommerce" in cl: m["ecom"] = c
-        elif "drupal" in cl and ("cms" in cl or "partner" in cl): m["drupal"] = c
-        elif "conversionbox" in cl and "compet" in cl: m["cb"] = c
+        elif cl == "e-commerce technologies": m["ecom"] = c
+        elif cl == "drupal partners (cms)": m["drupal"] = c
+        elif cl == "conversionbox competitors": m["cb"] = c
+    # Fallback: flexible matching if exact names didn't work
+    if "ecom" not in m:
+        for c in df.columns:
+            cl = c.strip().lower()
+            if ("e-commerce" in cl or "ecommerce" in cl) and cl not in [v.strip().lower() for v in m.values()]:
+                m["ecom"] = c; break
+    if "drupal" not in m:
+        for c in df.columns:
+            cl = c.strip().lower()
+            if cl.startswith("drupal") and ("cms" in cl or "partner" in cl):
+                m["drupal"] = c; break
+    if "cb" not in m:
+        for c in df.columns:
+            cl = c.strip().lower()
+            if cl.startswith("conversionbox") and "compet" in cl:
+                m["cb"] = c; break
     return m
 
 
@@ -108,14 +124,6 @@ def load_hubspot():
         return None
 
     tc, ec, wc = cols["tag"], cols["email"], cols.get("web","")
-    ecom_c, drupal_c, cb_c = cols.get("ecom",""), cols.get("drupal",""), cols.get("cb","")
-
-    # Debug: show what the code sees
-    st.sidebar.write(f"**Drupal col name:** '{drupal_c}'")
-    if drupal_c and drupal_c in df.columns:
-        vals = df[drupal_c].replace("", pd.NA).dropna().head(20).tolist()
-        st.sidebar.write(f"**Sample values:** {vals}")
-        st.sidebar.write(f"**Non-empty rows:** {(df[drupal_c] != '').sum()}")
     ecom_c, drupal_c, cb_c = cols.get("ecom",""), cols.get("drupal",""), cols.get("cb","")
 
     # Clean
