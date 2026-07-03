@@ -418,9 +418,9 @@ def parse_contribution():
                     if current_month not in months: months[current_month] = []
                     months[current_month].append({"date": current_month, "category": category, "count": count})
 
-        # Build output (only valid months Jan-Jun)
+        # Build output (all months, sorted newest first)
         person_months = []
-        for mk in sorted([m for m in months if m in VALID_MONTHS], key=lambda m: MONTH_ORDER.get(m.lower()[:3], 0), reverse=True):
+        for mk in sorted(months.keys(), key=lambda m: MONTH_ORDER.get(m.lower()[:3], 0), reverse=True):
             entries = months[mk]
             if entries:
                 person_months.append({"month": f"{mk} 2026", "total": sum(e["count"] for e in entries), "entries": entries})
