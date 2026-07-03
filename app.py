@@ -15,8 +15,10 @@ import streamlit.components.v1 as components
 # ════════════════════════════════════════
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
 
-# ── HubSpot Service Key (paste your key here) ──
-HUBSPOT_SERVICE_KEY = st.secrets.get("HUBSPOT_API_KEY", "")
+# ── HubSpot Service Key (stored in Streamlit Secrets, not in code) ──
+# Go to Streamlit > Manage app > Settings > Secrets and add:
+# HUBSPOT_API_KEY = "your-key-here"
+HUBSPOT_SERVICE_KEY = ""  # Will be loaded from Streamlit Secrets below
 
 # HubSpot internal property names
 HS_PROPS = {
@@ -32,6 +34,10 @@ HUBSPOT_GDRIVE_ID = "1iEJV-vbJuOxdBi_p_INBP8B43uOOCsAH"
 HUBSPOT_CSV = os.path.join(APP_DIR, "all-contacts.csv")
 TCS_EMAIL_MKT_CSV = os.path.join(APP_DIR, "Copy of TCS opener vs non opener - COMBINED LIST.csv")
 BW_EMAIL_MKT_CSV = os.path.join(APP_DIR, "Copy of Drupal data cleaning - Sheet3.csv")
+
+# Extra email list (all brands, downloaded from Google Drive)
+EXTRA_EMAIL_GDRIVE_ID = "1UE_rb7o5ODjSIpHJFSzqBNJHV37-Xht-"
+EXTRA_EMAIL_CSV = os.path.join(APP_DIR, "tcs-email-using-combined.csv")
 CONTRIBUTION_XLSX = None  # Auto-detected below
 for fname in ["Copy of Over all DB .xlsx", "Copy of Over all DB.xlsx", "Copy_of_Over_all_DB.xlsx",
               "Copy of Over all DB  .xlsx", "contribution.xlsx"]:
@@ -60,6 +66,12 @@ MONTH_ORDER = {"jan":1,"feb":2,"mar":3,"apr":4,"may":5,"jun":6,"jul":7,"aug":8,"
 st.set_page_config(page_title="Lead Database Dashboard", page_icon="📊", layout="wide", initial_sidebar_state="collapsed")
 st.markdown("""<style>#MainMenu,header,footer{visibility:hidden}.stApp{background-color:#f8f9fa}
 .block-container{padding:0!important;max-width:100%!important}iframe{border:none!important}</style>""", unsafe_allow_html=True)
+
+# Load HubSpot key from Streamlit Secrets
+try:
+    HUBSPOT_SERVICE_KEY = st.secrets["HUBSPOT_API_KEY"]
+except:
+    HUBSPOT_SERVICE_KEY = ""
 
 
 # ════════════════════════════════════════
@@ -390,34 +402,72 @@ def load_hubspot():
 # ════════════════════════════════════════
 # LOAD EMAIL MARKETING
 # ════════════════════════════════════════
-def load_email_mkt(csv_path, brand_rows):
-    if not os.path.exists(csv_path): return None
-    df = pd.read_csv(csv_path, low_memory=False, on_bad_lines="skip", encoding="utf-8", encoding_errors="replace")
-    email_col = status_col = None
-    for c in df.columns:
-        if c.strip().lower()=="email": email_col=c
-        else: status_col=c
-    if not email_col or not status_col: return None
+def load_extra_emails():
+    """Load the extra email list from Google Drive (emails only, no status)."""
+    if not os.path.exists(EXTRA_EMAIL_CSV):
+        download_gdrive(EXTRA_EMAIL_GDRIVE_ID, EXTRA_EMAIL_CSV)
+    if not os.path.exists(EXTRA_EMAIL_CSV):
+        return set()
+    try:
+        df = pd.read_csv(EXTRA_EMAIL_CSV, low_memory=False, on_bad_lines="skip", encoding="utf-8", encoding_errors="replace")
+        email_col = None
+        for c in df.columns:
+            if c.strip().lower() == "email":
+                email_col = c
+                break
+        if not email_col:
+            return set()
+        return set(df[email_col].fillna("").astype(str).str.strip()) - {""}
+    except:
+        return set()
 
-    df[email_col] = df[email_col].fillna("").astype(str).str.strip()
-    df[status_col] = df[status_col].fillna("").astype(str).str.lower()
+
+def load_email_mkt(csv_path, brand_rows, extra_emails=None):
+    """Load email marketing CSV and combine with extra email list."""
     mkt = {}
-    for _,row in df.iterrows():
-        e = row[email_col]
-        if e: mkt[e] = "opener" if ("opener" in row[status_col] and "non" not in row[status_col]) else "non-opener"
+
+    # Load the brand-specific CSV (has opener/non-opener status)
+    if os.path.exists(csv_path):
+        df = pd.read_csv(csv_path, low_memory=False, on_bad_lines="skip", encoding="utf-8", encoding_errors="replace")
+        email_col = status_col = None
+        for c in df.columns:
+            if c.strip().lower() == "email": email_col = c
+            else: status_col = c
+        if email_col and status_col:
+            df[email_col] = df[email_col].fillna("").astype(str).str.strip()
+            df[status_col] = df[status_col].fillna("").astype(str).str.lower()
+            for _, row in df.iterrows():
+                e = row[email_col]
+                if e:
+                    is_opener = "opener" in row[status_col] and "non" not in row[status_col]
+                    mkt[e] = "opener" if is_opener else "non-opener"
+
+    # Add extra emails (no status info, count as "using" only)
+    if extra_emails:
+        for e in extra_emails:
+            if e and e not in mkt:
+                mkt[e] = "using"
+
+    if not mkt:
+        return None
 
     mkt_set = set(mkt.keys())
-    result = {"total":0,"openers":0,"non_openers":0,"new_total":0,"by_tech":{}}
+    result = {"total": 0, "openers": 0, "non_openers": 0, "new_total": 0, "by_tech": {}}
     all_brand_emails = set()
     for tr in brand_rows:
-        tech_emails = set(tr.get("emails",[]))
+        tech_emails = set(tr.get("emails", []))
         all_brand_emails.update(tech_emails)
         matched = tech_emails & mkt_set
-        op = sum(1 for e in matched if mkt.get(e)=="opener")
-        result["by_tech"][tr["label"]] = {"total":len(matched),"openers":op,"non_openers":len(matched)-op,"new_emails":len(tech_emails)-len(matched)}
+        op = sum(1 for e in matched if mkt.get(e) == "opener")
+        non_op = sum(1 for e in matched if mkt.get(e) == "non-opener")
+        result["by_tech"][tr["label"]] = {
+            "total": len(matched), "openers": op,
+            "non_openers": non_op,
+            "new_emails": len(tech_emails) - len(matched)
+        }
         result["total"] += len(matched)
         result["openers"] += op
-        result["non_openers"] += len(matched)-op
+        result["non_openers"] += non_op
     result["new_total"] = len(all_brand_emails) - len(all_brand_emails & mkt_set)
     return result
 
@@ -582,7 +632,7 @@ def load_all():
             "conversionbox": {"name":"ConversionBox","colLabel":"Technology","rows":[],"totals":{"leads":0,"websites":0}},
         },
         "others": [], "overlap": {"tcs":{},"drupal":{},"conversionbox":{}},
-        "email_mkt": {"tcs":None,"drupal":None}, "persons": {},
+        "email_mkt": {"tcs":None,"drupal":None,"conversionbox":None}, "persons": {},
     }
 
     # Download HubSpot from Google Drive
@@ -597,8 +647,15 @@ def load_all():
             data["brands"][b]["totals"] = hub[b]["totals"]
         data["others"] = hub["others"]
         data["overlap"] = hub["overlap"]
-        data["email_mkt"]["tcs"] = load_email_mkt(TCS_EMAIL_MKT_CSV, hub["tcs"]["rows"])
-        data["email_mkt"]["drupal"] = load_email_mkt(BW_EMAIL_MKT_CSV, hub["drupal"]["rows"])
+        # Load extra email list (covers all brands)
+        extra_emails = load_extra_emails()
+
+        data["email_mkt"]["tcs"] = load_email_mkt(TCS_EMAIL_MKT_CSV, hub["tcs"]["rows"], extra_emails)
+        data["email_mkt"]["drupal"] = load_email_mkt(BW_EMAIL_MKT_CSV, hub["drupal"]["rows"], extra_emails)
+        # ConversionBox: no brand-specific CSV, but use extra emails
+        cb_mkt = load_email_mkt("__nonexistent__", hub["conversionbox"]["rows"], extra_emails)
+        if cb_mkt:
+            data["email_mkt"]["conversionbox"] = cb_mkt
 
     data["persons"] = parse_contribution()
     return data
@@ -761,8 +818,8 @@ if "data_source" not in st.session_state:
 col1, col2 = st.columns([6, 1])
 with col2:
     if st.button("🔄 Refresh from HubSpot", use_container_width=True):
-        if HUBSPOT_SERVICE_KEY == "YOUR_SERVICE_KEY_HERE":
-            st.error("Paste your HubSpot Service Key in app.py first.")
+        if not HUBSPOT_SERVICE_KEY:
+            st.error("Add HUBSPOT_API_KEY in Streamlit Settings > Secrets first.")
         else:
             with st.spinner("Pulling live data from HubSpot (30 to 60 seconds)..."):
                 st.session_state.hub_data = fetch_hubspot_counts()
@@ -788,7 +845,7 @@ if st.session_state.hub_data and st.session_state.data_source == "hubspot":
     data["others"] = hub_live["others"]
     data["overlap"] = hub_live["overlap"]
     # Email marketing cross-reference not available via API
-    data["email_mkt"] = {"tcs": None, "drupal": None}
+    data["email_mkt"] = {"tcs": None, "drupal": None, "conversionbox": None}
 
 html = build_html(data)
 components.html(html, height=1800, scrolling=True)
