@@ -15,6 +15,19 @@ import streamlit.components.v1 as components
 # ════════════════════════════════════════
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
 
+# ── HubSpot Service Key (paste your key here) ──
+HUBSPOT_SERVICE_KEY = st.secrets.get("HUBSPOT_API_KEY", "")
+
+# HubSpot internal property names
+HS_PROPS = {
+    "email": "email",
+    "website": "website",
+    "tag": "tag",
+    "ecom": "e_commerce_technologies",
+    "drupal": "drupal_partners__cms_",
+    "cb": "conversionbox_competitors",
+}
+
 HUBSPOT_GDRIVE_ID = "1iEJV-vbJuOxdBi_p_INBP8B43uOOCsAH"
 HUBSPOT_CSV = os.path.join(APP_DIR, "all-contacts.csv")
 TCS_EMAIL_MKT_CSV = os.path.join(APP_DIR, "Copy of TCS opener vs non opener - COMBINED LIST.csv")
@@ -75,6 +88,132 @@ def download_gdrive(file_id, dest):
         os.remove(dest)
         st.error("Google Drive download failed. Check the sharing link.")
         return
+
+
+# ════════════════════════════════════════
+# HUBSPOT API (Quick Count via Search)
+# ════════════════════════════════════════
+def hs_search_count(filters):
+    """Search HubSpot contacts and return total count."""
+    url = "https://api.hubapi.com/crm/v3/objects/contacts/search"
+    headers = {"Authorization": f"Bearer {HUBSPOT_SERVICE_KEY}", "Content-Type": "application/json"}
+    body = {"filterGroups": [{"filters": filters}], "limit": 1}
+    try:
+        r = requests.post(url, headers=headers, json=body, timeout=15)
+        if r.status_code == 200:
+            return r.json().get("total", 0)
+        else:
+            st.warning(f"HubSpot API error: {r.status_code}")
+            return 0
+    except Exception as e:
+        st.warning(f"HubSpot connection error: {e}")
+        return 0
+
+
+def hs_prop_filter(prop, operator, value=None):
+    """Build a HubSpot filter dict."""
+    f = {"propertyName": prop, "operator": operator}
+    if value is not None:
+        f["value"] = value
+    return f
+
+
+def fetch_hubspot_counts():
+    """Fetch live counts from HubSpot Search API."""
+    import time
+    result = {"tcs": {"rows": [], "totals": {"leads": 0, "websites": 0}},
+              "drupal": {"rows": [], "totals": {"leads": 0, "websites": 0}},
+              "conversionbox": {"rows": [], "totals": {"leads": 0, "websites": 0}},
+              "others": [], "overlap": {"tcs": {}, "drupal": {}, "conversionbox": {}}}
+
+    ep = HS_PROPS["ecom"]
+    dp = HS_PROPS["drupal"]
+    cp = HS_PROPS["cb"]
+    tp = HS_PROPS["tag"]
+
+    # ── TCS: e-Commerce Technologies ──
+    tcs_techs = {
+        "Shopify": ["Shopify"],
+        "BigCommerce": ["BigCommerce", "Big Commerce"],
+        "WooCommerce": ["WooCommerce", "Woo Commerce"],
+        "Magento": ["Magento"],
+        "Shopify Plus": ["Shopify Plus"],
+    }
+
+    tcs_total = hs_search_count([hs_prop_filter(ep, "HAS_PROPERTY")])
+    time.sleep(0.3)
+    tcs_named = 0
+    for tech, values in tcs_techs.items():
+        count = 0
+        for val in values:
+            c = hs_search_count([hs_prop_filter(ep, "CONTAINS_TOKEN", val)])
+            count += c
+            time.sleep(0.3)
+        # Special: Shopify should not include Shopify Plus
+        if tech == "Shopify":
+            plus_count = 0
+            for val in tcs_techs.get("Shopify Plus", []):
+                plus_count += hs_search_count([hs_prop_filter(ep, "CONTAINS_TOKEN", val)])
+                time.sleep(0.3)
+            count = max(0, count - plus_count)
+        result["tcs"]["rows"].append({"label": tech, "leads": count, "websites": 0, "emails": []})
+        tcs_named += count
+
+    other_tcs = max(0, tcs_total - tcs_named)
+    result["tcs"]["rows"].append({"label": "Other Technologies", "leads": other_tcs, "websites": 0, "emails": []})
+    result["tcs"]["totals"]["leads"] = tcs_total
+
+    # ── BinaryWorks: Drupal Partners (CMS) ──
+    drupal_total = hs_search_count([hs_prop_filter(dp, "HAS_PROPERTY")])
+    time.sleep(0.3)
+    drupal_cats = {}
+    for ver in ["7", "8", "9", "10", "11"]:
+        c = hs_search_count([hs_prop_filter(dp, "CONTAINS_TOKEN", f"Drupal {ver}")])
+        if c > 0: drupal_cats[f"Drupal {ver}"] = c
+        time.sleep(0.3)
+
+    # Drupal generic
+    drupal_generic = hs_search_count([hs_prop_filter(dp, "EQ", "Drupal")])
+    if drupal_generic > 0: drupal_cats["Drupal (Generic)"] = drupal_generic
+    time.sleep(0.3)
+
+    # WordPress (all versions)
+    wp_count = hs_search_count([hs_prop_filter(dp, "CONTAINS_TOKEN", "WordPress")])
+    wp_count2 = hs_search_count([hs_prop_filter(dp, "CONTAINS_TOKEN", "Wordpress")])
+    wp_total = max(wp_count, wp_count2)
+    if wp_total > 0: drupal_cats["WordPress"] = wp_total
+    time.sleep(0.3)
+
+    named_drupal = sum(drupal_cats.values())
+    other_cms = max(0, drupal_total - named_drupal)
+    if other_cms > 0: drupal_cats["Other CMS"] = other_cms
+
+    for cat in ["Drupal 7", "Drupal 8", "Drupal 9", "Drupal 10", "Drupal 11", "Drupal (Generic)", "WordPress", "Other CMS"]:
+        if cat in drupal_cats:
+            result["drupal"]["rows"].append({"label": cat, "leads": drupal_cats[cat], "websites": 0, "emails": []})
+    result["drupal"]["totals"]["leads"] = drupal_total
+
+    # ── ConversionBox ──
+    cb_values = ["Doofinder", "SearchSpring", "Klevu", "Swiftype", "LucidWorks",
+                 "Algolia", "Fast Simon", "Searchanise", "Boost Commerce",
+                 "Hawk search", "Elastic Suite", "Zopim"]
+    cb_total = hs_search_count([hs_prop_filter(cp, "HAS_PROPERTY")])
+    time.sleep(0.3)
+    for val in cb_values:
+        c = hs_search_count([hs_prop_filter(cp, "EQ", val)])
+        if c > 0:
+            result["conversionbox"]["rows"].append({"label": val, "leads": c, "websites": 0, "emails": []})
+        time.sleep(0.3)
+    result["conversionbox"]["totals"]["leads"] = cb_total
+
+    # ── Others (TAG based) ──
+    for tag_lower, display in OTHERS_DISPLAY.items():
+        c = hs_search_count([hs_prop_filter(tp, "EQ", tag_lower)])
+        if c > 0:
+            result["others"].append({"label": display, "leads": c, "websites": 0})
+        time.sleep(0.3)
+
+    return result
 
 
 # ════════════════════════════════════════
@@ -611,6 +750,45 @@ render();
 # ════════════════════════════════════════
 # MAIN
 # ════════════════════════════════════════
+
+# Initialize session state
+if "hub_data" not in st.session_state:
+    st.session_state.hub_data = None
+if "data_source" not in st.session_state:
+    st.session_state.data_source = "csv"
+
+# Refresh button (above dashboard)
+col1, col2 = st.columns([6, 1])
+with col2:
+    if st.button("🔄 Refresh from HubSpot", use_container_width=True):
+        if HUBSPOT_SERVICE_KEY == "YOUR_SERVICE_KEY_HERE":
+            st.error("Paste your HubSpot Service Key in app.py first.")
+        else:
+            with st.spinner("Pulling live data from HubSpot (30 to 60 seconds)..."):
+                st.session_state.hub_data = fetch_hubspot_counts()
+                st.session_state.data_source = "hubspot"
+            st.rerun()
+
+# Show data source indicator
+with col1:
+    if st.session_state.data_source == "hubspot":
+        st.caption("📡 Showing live HubSpot data (websites count unavailable via API)")
+    else:
+        st.caption("📁 Showing data from HubSpot export file")
+
+# Load data
 data = load_all()
+
+# If HubSpot refresh was clicked, override brand data
+if st.session_state.hub_data and st.session_state.data_source == "hubspot":
+    hub_live = st.session_state.hub_data
+    for b in ["tcs", "drupal", "conversionbox"]:
+        data["brands"][b]["rows"] = hub_live[b]["rows"]
+        data["brands"][b]["totals"] = hub_live[b]["totals"]
+    data["others"] = hub_live["others"]
+    data["overlap"] = hub_live["overlap"]
+    # Email marketing cross-reference not available via API
+    data["email_mkt"] = {"tcs": None, "drupal": None}
+
 html = build_html(data)
 components.html(html, height=1800, scrolling=True)
