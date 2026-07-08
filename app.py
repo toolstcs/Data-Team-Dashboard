@@ -772,11 +772,11 @@ function cc(c){{return{{'ConversionBox':'#6366F1','Drupal':'#3B82F6','TCS':'#433
 function sB(k){{aB=k;mF='all';render()}}function tC(){{cO=!cO;render()}}function sP(k){{aP=k;render()}}function tM(p,m){{const k=p+'-'+m;oM[k]=!oM[k];render()}}function sM(f){{mF=f;render()}}
 function chart(p,t){{const ms=[...p.months].reverse(),mx=Math.max(...ms.map(m=>m.total)),st=4,sv=Math.ceil(mx/st/1000)*1000,cl=sv*st;
 let g='',y='';for(let i=0;i<=st;i++){{const pc=(i/st)*100,v=sv*i;g+=`<div class="gl" style="bottom:${{pc}}%"></div>`;y+=`<div class="yl">${{v>=1000?(v/1000).toFixed(0)+'K':v}}</div>`}}
-// Target lines: 3K red, 5K yellow, 10K green
+// Target lines: 3K red, 5K yellow, 10K green (behind bars)
 const targets=[{{v:3000,c:'#EF4444',l:'3K'}},{{v:5000,c:'#F59E0B',l:'5K'}},{{v:10000,c:'#10B981',l:'10K'}}];
-let tl='';targets.forEach(t=>{{if(t.v<=cl){{const tp=(t.v/cl)*100;tl+=`<div style="position:absolute;left:0;right:0;bottom:${{tp}}%;height:2px;background:${{t.c}};opacity:0.5;z-index:2"></div><div style="position:absolute;right:-30px;bottom:${{tp-1}}%;font-size:9px;font-weight:700;color:${{t.c}};z-index:3">${{t.l}}</div>`}}}});
+let tl='';targets.forEach(t=>{{if(t.v<=cl){{const tp=(t.v/cl)*100;tl+=`<div style="position:absolute;left:0;right:0;bottom:${{tp}}%;height:1px;border-top:2px dashed ${{t.c}};opacity:0.4;z-index:0"></div><div style="position:absolute;left:-35px;bottom:${{tp-1}}%;font-size:8px;font-weight:700;color:${{t.c}};z-index:0">${{t.l}}</div>`}}}});
 const[c1,c2]=t.c;const bs=ms.map(m=>{{const h=cl>0?(m.total/cl)*100:0;return`<div class="gbg"><div class="gb" style="height:${{Math.max(h,3)}}%;background:linear-gradient(180deg,${{c2}},${{c1}})"><div class="gv">${{fmt(m.total)}}</div><div class="gbl">${{m.month.split(' ')[0]}}</div></div></div>`}}).join('');
-return`<div class="gp"><div class="gt">${{p.name}}'s Monthly Contribution</div><div class="ga" style="padding-right:40px"><div class="gy">${{y}}</div><div class="gg">${{g}}${{tl}}</div><div class="gbs">${{bs}}</div></div></div>`}}
+return`<div class="gp"><div class="gt">${{p.name}}'s Monthly Contribution</div><div class="ga"><div class="gy">${{y}}</div><div class="gg">${{g}}${{tl}}</div><div class="gbs">${{bs}}</div></div></div>`}}
 function render(){{const b=B[aB],t=TH[aB]||TH.others;th(aB);const isO=aB==='others';
 const ov=OV[aB]||{{}};let ovH='';for(const[ob,cnt] of Object.entries(ov)){{const nm={{tcs:'TCS',drupal:'BinaryWorks',conversionbox:'ConversionBox'}};ovH+=`<span class="olt">${{fmt(cnt)}} also in ${{nm[ob]||ob}}</span>`}}
 const mkt=EM[aB]||null;const hM=!!mkt;const mc=hM?'hm':'';
@@ -834,15 +834,12 @@ if "hub_data" not in st.session_state:
 if "data_source" not in st.session_state:
     st.session_state.data_source = "csv"
 
-# Refresh button and source indicator (compact)
-col1, col2, col3 = st.columns([5, 2, 1])
-with col1:
-    if st.session_state.data_source == "hubspot":
-        st.caption("📡 Live HubSpot data")
-    else:
-        st.caption("")
-with col3:
-    if st.button("🔄 HubSpot", use_container_width=True):
+# Compact refresh button
+st.markdown('<div style="display:flex;justify-content:flex-end;padding:4px 24px 0">', unsafe_allow_html=True)
+col1, col2, col3, col4, col5 = st.columns([1,1,1,1,0.4])
+with col5:
+    refresh = st.button("🔄", help="Refresh from HubSpot", use_container_width=False)
+if refresh:
         if not HUBSPOT_SERVICE_KEY:
             st.error("Add HUBSPOT_API_KEY in Streamlit Settings > Secrets first.")
         else:
