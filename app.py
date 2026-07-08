@@ -38,13 +38,14 @@ BW_EMAIL_MKT_CSV = os.path.join(APP_DIR, "Copy of Drupal data cleaning - Sheet3.
 # Extra email list (all brands, downloaded from Google Drive)
 EXTRA_EMAIL_GDRIVE_ID = "1UE_rb7o5ODjSIpHJFSzqBNJHV37-Xht-"
 EXTRA_EMAIL_CSV = os.path.join(APP_DIR, "tcs-email-using-combined.csv")
-CONTRIBUTION_XLSX = None  # Auto-detected below
-for fname in ["Copy of Over all DB .xlsx", "Copy of Over all DB.xlsx", "Copy_of_Over_all_DB.xlsx",
-              "Copy of Over all DB  .xlsx", "contribution.xlsx"]:
-    p = os.path.join(APP_DIR, fname)
-    if os.path.exists(p):
-        CONTRIBUTION_XLSX = p
-        break
+# Individual contribution: read directly from Google Sheets (no download needed)
+GSHEET_ID = "1FJovgRvuBIKKZK1Q2gbthDXhhm6vHASnbCJqZ5sGit4"
+GSHEET_TABS = {
+    "kishore": "kishore data count",
+    "ilakkiya": "Illakkia Data count",
+    "dharanshri": "Dharanishri Data Count",
+    "sales": "sales",
+}
 
 # Brand TAG mapping (all lowercase keys for case-insensitive matching)
 BRAND_TAGS = {"tcs": "tcs", "binaryworks": "drupal", "drupal": "drupal",
@@ -475,139 +476,94 @@ def load_email_mkt(csv_path, brand_rows, extra_emails=None):
 # ════════════════════════════════════════
 # PARSE CONTRIBUTION SHEETS
 # ════════════════════════════════════════
+def read_gsheet_tab(tab_name):
+    """Read a Google Sheet tab as a pandas DataFrame."""
+    import urllib.parse
+    url = f"https://docs.google.com/spreadsheets/d/{GSHEET_ID}/gviz/tq?tqx=out:csv&sheet={urllib.parse.quote(tab_name)}"
+    try:
+        df = pd.read_csv(url, on_bad_lines="skip", encoding="utf-8", encoding_errors="replace")
+        return df
+    except Exception as e:
+        return None
+
+
 def parse_contribution():
-    if not CONTRIBUTION_XLSX or not os.path.exists(CONTRIBUTION_XLSX): return {}
-    wb = openpyxl.load_workbook(CONTRIBUTION_XLSX, data_only=True)
+    """Read individual contribution data from Google Sheets."""
     persons = {}
+    sales_data = {}
 
-    PERSON_NAMES = {"kishore":"Kishore","ilakkiya":"Ilakkiya","illakkia":"Ilakkiya",
-                    "dharanshri":"Dharanshri","dharanishri":"Dharanshri"}
+    PERSON_DISPLAY = {"kishore": "Kishore", "ilakkiya": "Ilakkiya", "dharanshri": "Dharanshri"}
 
-    for sn in wb.sheetnames:
-        person_name = None
-        for key, name in PERSON_NAMES.items():
-            if key in sn.lower():
-                person_name = name
-                break
-        if not person_name: continue
+    for key, tab_name in GSHEET_TABS.items():
+        if key == "sales":
+            continue  # Handle sales separately
+        df = read_gsheet_tab(tab_name)
+        if df is None or len(df) == 0:
+            continue
 
-        ws = wb[sn]
-        rows = [list(r) for r in ws.iter_rows(min_row=1, values_only=True)]
-        if not rows: continue
+        # Normalize column names
+        df.columns = [str(c).strip().lower() for c in df.columns]
 
-        # Detect columns from header
-        header = rows[0]
+        # Find columns
         month_col = count_col = cat_col = date_col = None
+        for c in df.columns:
+            if c == "month": month_col = c
+            elif c in ("count", "lead count"): count_col = c
+            elif c in ("technology", "domain name", "domain", "category"): cat_col = c
+            elif c in ("date", "date "): date_col = c
 
-        for i, h in enumerate(header):
-            if h is None: continue
-            hl = str(h).strip().lower()
-            if hl == "month": month_col = i
-            elif hl in ("count", "lead count", " count "): count_col = i
-            elif hl in ("technology", "domain name", "domain", "category"): cat_col = i
-            elif hl in ("date", "date "): date_col = i
-
-        # Fallback: find count column from data
+        # Fallback: find count column
         if count_col is None:
-            for tr in rows[1:min(25, len(rows))]:
-                for i, v in enumerate(tr):
-                    if v is None: continue
-                    try:
-                        float(v)
-                        count_col = i
-                        if i > 0 and cat_col is None: cat_col = i - 1
-                        if cat_col is not None and cat_col > 0 and month_col is None: month_col = 0
-                        break
-                    except: continue
-                if count_col is not None: break
+            for c in df.columns:
+                if df[c].dtype in ("int64", "float64"):
+                    count_col = c
+                    break
 
-        if count_col is None: continue
+        if count_col is None:
+            continue
 
         months = OrderedDict()
 
-        # ── FORMAT A: Has a Month column (e.g. "Jan", "Feb", "Mar") ──
-        if month_col is not None:
-            for row in rows[1:]:
-                # Get month
-                mv = row[month_col] if month_col < len(row) else None
-                if mv is None: continue
-                if isinstance(mv, datetime):
-                    month_key = mv.strftime("%b")
-                    date_str = mv.strftime("%b %d")
-                else:
-                    ms = str(mv).strip()
-                    if not ms: continue
-                    month_key = None
-                    for mn in MONTH_ORDER:
-                        if ms.lower().startswith(mn):
-                            month_key = mn.capitalize()
-                            break
-                    if not month_key: continue
-                    date_str = month_key
-
-                # Get count
-                try:
-                    count = int(float(row[count_col]))
-                except: continue
-                if count <= 0: continue
-
-                # Get category
-                category = "General"
-                if cat_col is not None and cat_col < len(row) and row[cat_col]:
-                    category = str(row[cat_col]).strip()
-
-                # Get date from date column if available
-                if date_col is not None and date_col < len(row) and row[date_col]:
-                    dv = row[date_col]
-                    if isinstance(dv, datetime):
-                        date_str = dv.strftime("%b %d")
-
-                if month_key not in months: months[month_key] = []
-                months[month_key].append({"date": date_str, "category": category, "count": count})
-
-        # ── FORMAT B: Month headers in data rows (e.g. "Jun month Data count") ──
-        else:
-            current_month = None
-            for row in rows[1:]:
-                c0 = str(row[0]).strip() if row[0] else ""
-                c0_lower = c0.lower()
-
-                # Detect month header
-                found = False
+        for _, row in df.iterrows():
+            # Get month
+            month_key = None
+            date_str = ""
+            if month_col and pd.notna(row.get(month_col)):
+                mv = str(row[month_col]).strip()
                 for mn in MONTH_ORDER:
-                    if c0_lower.startswith(mn) and any(w in c0_lower for w in ["month", "data", "count"]):
-                        current_month = mn.capitalize()
-                        if current_month not in months: months[current_month] = []
-                        found = True
+                    if mv.lower().startswith(mn):
+                        month_key = mn.capitalize()
                         break
-                if found: continue
-
-                # Skip junk rows
-                if c0_lower in ("total count", "total", "") or c0_lower.startswith(("summary", "file:", "dashboard")): continue
-                if all(v is None for v in row): continue
-
+                date_str = month_key or mv
+            elif date_col and pd.notna(row.get(date_col)):
                 try:
-                    count = int(float(row[count_col]))
-                except: continue
-                if count <= 0: continue
+                    dv = pd.to_datetime(row[date_col])
+                    month_key = dv.strftime("%b")
+                    date_str = dv.strftime("%b %d")
+                except:
+                    continue
 
-                category = "General"
-                if cat_col is not None and cat_col < len(row) and row[cat_col]:
-                    category = str(row[cat_col]).strip()
-                elif count_col == 1:
-                    category = c0
+            if not month_key:
+                continue
 
-                if isinstance(row[0], datetime):
-                    mk = row[0].strftime("%b")
-                    ds = row[0].strftime("%b %d")
-                    if current_month is None: current_month = mk
-                    if mk not in months: months[mk] = []
-                    months[mk].append({"date": ds, "category": category, "count": count})
-                elif current_month:
-                    if current_month not in months: months[current_month] = []
-                    months[current_month].append({"date": current_month, "category": category, "count": count})
+            # Get count
+            try:
+                count = int(float(row[count_col]))
+            except:
+                continue
+            if count <= 0:
+                continue
 
-        # Build output (all months, sorted newest first)
+            # Get category
+            category = "General"
+            if cat_col and pd.notna(row.get(cat_col)):
+                category = str(row[cat_col]).strip()
+
+            if month_key not in months:
+                months[month_key] = []
+            months[month_key].append({"date": date_str, "category": category, "count": count})
+
+        # Build output sorted newest first
         person_months = []
         for mk in sorted(months.keys(), key=lambda m: MONTH_ORDER.get(m.lower()[:3], 0), reverse=True):
             entries = months[mk]
@@ -615,10 +571,50 @@ def parse_contribution():
                 person_months.append({"month": f"{mk} 2026", "total": sum(e["count"] for e in entries), "entries": entries})
 
         if person_months:
-            persons[person_name.lower()] = {"name": person_name, "months": person_months}
+            display_name = PERSON_DISPLAY.get(key, key.capitalize())
+            persons[key] = {"name": display_name, "months": person_months}
 
-    wb.close()
-    return persons
+    # Parse sales tab
+    sales_df = read_gsheet_tab(GSHEET_TABS.get("sales", ""))
+    if sales_df is not None and len(sales_df) > 0:
+        sales_df.columns = [str(c).strip().lower() for c in sales_df.columns]
+        name_col = count_col = month_col = tech_col = None
+        for c in sales_df.columns:
+            if c == "name": name_col = c
+            elif c == "month": month_col = c
+            elif c in ("count",): count_col = c
+            elif c in ("technology",): tech_col = c
+
+        if name_col and count_col and month_col:
+            for _, row in sales_df.iterrows():
+                name = str(row[name_col]).strip().lower() if pd.notna(row.get(name_col)) else ""
+                month_raw = str(row[month_col]).strip() if pd.notna(row.get(month_col)) else ""
+                try:
+                    count = int(float(row[count_col]))
+                except:
+                    continue
+
+                month_key = None
+                for mn in MONTH_ORDER:
+                    if month_raw.lower().startswith(mn):
+                        month_key = mn.capitalize()
+                        break
+                if not month_key:
+                    continue
+
+                # Normalize name
+                for pkey in PERSON_DISPLAY:
+                    if pkey in name or name in pkey:
+                        name = pkey
+                        break
+
+                if name not in sales_data:
+                    sales_data[name] = {}
+                if month_key not in sales_data[name]:
+                    sales_data[name][month_key] = 0
+                sales_data[name][month_key] += count
+
+    return {"persons": persons, "sales": sales_data}
 
 
 # ════════════════════════════════════════
@@ -632,7 +628,7 @@ def load_all():
             "conversionbox": {"name":"ConversionBox","colLabel":"Technology","rows":[],"totals":{"leads":0,"websites":0}},
         },
         "others": [], "overlap": {"tcs":{},"drupal":{},"conversionbox":{}},
-        "email_mkt": {"tcs":None,"drupal":None,"conversionbox":None}, "persons": {},
+        "email_mkt": {"tcs":None,"drupal":None,"conversionbox":None}, "persons": {}, "sales": {},
     }
 
     # Download HubSpot from Google Drive
@@ -657,7 +653,9 @@ def load_all():
         if cb_mkt:
             data["email_mkt"]["conversionbox"] = cb_mkt
 
-    data["persons"] = parse_contribution()
+    contrib = parse_contribution()
+    data["persons"] = contrib.get("persons", {})
+    data["sales"] = contrib.get("sales", {})
     return data
 
 
@@ -676,6 +674,7 @@ def build_html(data):
     emj = json.dumps({k: {"total":v["total"],"openers":v["openers"],"non_openers":v["non_openers"],
           "new_total":v["new_total"],"by_tech":v["by_tech"]} if v else None for k,v in data["email_mkt"].items()})
     pj = json.dumps(data["persons"])
+    sj = json.dumps(data["sales"])
 
     return f"""<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">
 <style>
@@ -764,7 +763,7 @@ const TH={{tcs:{{a:'#4338ED',a2:'#F97316',g:'rgba(67,56,237,.12)',gb:'linear-gra
 drupal:{{a:'#8B5CF6',a2:'#F59E0B',g:'rgba(139,92,246,.12)',gb:'linear-gradient(90deg,#8B5CF6,#C4B5FD)',c:['#8B5CF6','#C4B5FD']}},
 conversionbox:{{a:'#2563EB',a2:'#10B981',g:'rgba(37,99,235,.12)',gb:'linear-gradient(90deg,#2563EB,#60A5FA)',c:['#2563EB','#60A5FA']}},
 others:{{a:'#6B7280',a2:'#9CA3AF',g:'rgba(107,114,128,.12)',gb:'linear-gradient(90deg,#6B7280,#9CA3AF)',c:['#6B7280','#9CA3AF']}}}};
-const B={bj};const OT={oj};const OV={ovj};const EM={emj};const P={pj};
+const B={bj};const OT={oj};const OV={ovj};const EM={emj};const P={pj};const SL={sj};
 let aB='tcs',cO=false,aP=Object.keys(P)[0]||'',oM={{}},mF='all';
 function fmt(n){{return n.toLocaleString('en-IN')}}
 function th(t){{const s=document.documentElement.style,h=TH[t]||TH.others;s.setProperty('--accent',h.a);s.setProperty('--accent2',h.a2);s.setProperty('--glow',h.g);s.setProperty('--grad-bar',h.gb);s.setProperty('--grad','linear-gradient(135deg,'+h.a+','+h.a+'aa)')}}
@@ -818,7 +817,11 @@ document.getElementById('app').innerHTML=`
 <div class="tg"><button class="tb ${{aB==='tcs'?'on':''}}" onclick="sB('tcs')"><img src="https://www.google.com/s2/favicons?domain=thecommerceshop.com&sz=16" style="width:14px;height:14px;vertical-align:middle;margin-right:4px;border-radius:2px"/>TCS</button><button class="tb ${{aB==='drupal'?'on':''}}" onclick="sB('drupal')"><img src="https://www.google.com/s2/favicons?domain=thebinaryworks.com&sz=16" style="width:14px;height:14px;vertical-align:middle;margin-right:4px;border-radius:2px"/>BinaryWorks</button><button class="tb ${{aB==='conversionbox'?'on':''}}" onclick="sB('conversionbox')"><img src="https://www.google.com/s2/favicons?domain=conversionbox.ai&sz=16" style="width:14px;height:14px;vertical-align:middle;margin-right:4px;border-radius:2px"/>ConversionBox</button><button class="tb ${{aB==='others'?'on':''}}" onclick="sB('others')">Others</button></div></div>
 ${{main}}
 ${{pks.length?`<div class="cw"><button class="cb ${{cO?'on':''}}" onclick="tC()"><span class="ar">&#9660;</span>Individual Contribution</button></div>
-<div class="cs ${{cO?'op':''}}"><div class="pw"><div class="tg">${{pbt}}</div></div>${{aP&&P[aP]?chart(P[aP],t):''}}${{pnl}}</div>`:''}}
+<div class="cs ${{cO?'op':''}}"><div class="pw"><div class="tg">${{pbt}}</div></div>${{aP&&P[aP]?chart(P[aP],t):''}}
+${{(()=>{{const sd=SL[aP];if(!sd)return '';const mos=Object.keys(sd).sort((a,b)=>{{const mo={{'jan':1,'feb':2,'mar':3,'apr':4,'may':5,'jun':6,'jul':7,'aug':8,'sep':9,'oct':10,'nov':11,'dec':12}};return (mo[a.toLowerCase().slice(0,3)]||0)-(mo[b.toLowerCase().slice(0,3)]||0)}});const total=Object.values(sd).reduce((s,v)=>s+v,0);return `<div class="pn" style="margin-top:0"><div class="pt" style="color:#F59E0B">📱 Mobile Numbers Enriched & Shared to Sales: ${{fmt(total)}}</div><div style="display:flex;gap:12px;flex-wrap:wrap">${{mos.map(m=>`<div style="background:var(--bg-el);padding:12px 20px;border-radius:10px;border:1px solid var(--bdr);text-align:center;min-width:80px"><div style="font-size:11px;color:var(--txt-s);font-weight:600;margin-bottom:4px">${{m}}</div><div style="font-size:18px;font-weight:800;color:var(--txt)">${{fmt(sd[m])}}</div></div>`).join('')}}</div></div>`;}})()??(()=>'')()}}
+${{pnl}}
+<div style="text-align:center;padding:16px 0"><button onclick="window.location.reload()" style="padding:6px 16px;background:#F59E0B;color:#fff;border:none;border-radius:6px;font-size:11px;font-weight:700;font-family:inherit;cursor:pointer">🔄 Refresh Sheet Data</button></div>
+</div>`:''}}
 <div class="ft">CommerceShop Lead Database Dashboard</div>`}}
 render();
 </script></body></html>"""
