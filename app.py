@@ -814,8 +814,8 @@ main=st+`<div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-
 let pnl='';for(const[pk,p] of Object.entries(P)){{let mH='';p.months.forEach((m,mi)=>{{const op=oM[pk+'-'+mi];mH+=`<div class="mr"><div class="mh" onclick="tM('${{pk}}',${{mi}})"><div class="ml"><span class="ma ${{op?'op':''}}">&#9654;</span><span class="mm">${{m.month}}</span><span class="me">${{m.entries.length}} entries</span></div><span class="mc">${{fmt(m.total)}}</span></div><div class="md ${{op?'op':''}}">${{m.entries.map(e=>`<div class="dr"><div class="dd">${{e.date}}</div><div><span class="dt" style="background:${{cc(e.category)}}15;color:${{cc(e.category)}};border:1px solid ${{cc(e.category)}}40">${{e.category}}</span></div><div class="dc">${{fmt(e.count)}}</div></div>`).join('')}}<div class="msw"><span>Subtotal</span><span>${{fmt(m.total)}}</span></div></div></div>`}});pnl+=`<div class="pp ${{aP===pk?'vis':''}}"><div class="pph"><span class="ppn">${{p.name}}</span></div>${{mH}}</div>`}}
 const pks=Object.keys(P);const pbt=pks.map(k=>`<button class="tb ${{aP===k?'on':''}}" onclick="sP('${{k}}')">${{P[k].name}}</button>`).join('');
 document.getElementById('app').innerHTML=`
-<div class="hdr"><div><h1>${{isO?'Others':b?.name||''}} <span class="hl">Lead Database</span></h1><div class="sub">Live data from HubSpot export</div></div>
-<div class="tg"><button class="tb ${{aB==='tcs'?'on':''}}" onclick="sB('tcs')">TCS</button><button class="tb ${{aB==='drupal'?'on':''}}" onclick="sB('drupal')">BinaryWorks</button><button class="tb ${{aB==='conversionbox'?'on':''}}" onclick="sB('conversionbox')">ConversionBox</button><button class="tb ${{aB==='others'?'on':''}}" onclick="sB('others')">Others</button></div></div>
+<div class="hdr"><div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap"><img src="${{aB==='tcs'?'https://www.google.com/s2/favicons?domain=thecommerceshop.com&sz=64':aB==='drupal'?'https://www.google.com/s2/favicons?domain=thebinaryworks.com&sz=64':aB==='conversionbox'?'https://www.google.com/s2/favicons?domain=conversionbox.ai&sz=64':''}}" style="width:32px;height:32px;border-radius:8px${{isO?';display:none':''}}" /><h1>${{isO?'Others':b?.name||''}} <span class="hl">Lead Database</span></h1><button onclick="window.open(window.location.href.split('?')[0]+'?refresh=1','_self')" style="padding:4px 12px;background:#10B981;color:#fff;border:none;border-radius:6px;font-size:10px;font-weight:700;font-family:inherit;cursor:pointer;white-space:nowrap">🔄 Refresh</button></div>
+<div class="tg"><button class="tb ${{aB==='tcs'?'on':''}}" onclick="sB('tcs')"><img src="https://www.google.com/s2/favicons?domain=thecommerceshop.com&sz=16" style="width:14px;height:14px;vertical-align:middle;margin-right:4px;border-radius:2px"/>TCS</button><button class="tb ${{aB==='drupal'?'on':''}}" onclick="sB('drupal')"><img src="https://www.google.com/s2/favicons?domain=thebinaryworks.com&sz=16" style="width:14px;height:14px;vertical-align:middle;margin-right:4px;border-radius:2px"/>BinaryWorks</button><button class="tb ${{aB==='conversionbox'?'on':''}}" onclick="sB('conversionbox')"><img src="https://www.google.com/s2/favicons?domain=conversionbox.ai&sz=16" style="width:14px;height:14px;vertical-align:middle;margin-right:4px;border-radius:2px"/>ConversionBox</button><button class="tb ${{aB==='others'?'on':''}}" onclick="sB('others')">Others</button></div></div>
 ${{main}}
 ${{pks.length?`<div class="cw"><button class="cb ${{cO?'on':''}}" onclick="tC()"><span class="ar">&#9660;</span>Individual Contribution</button></div>
 <div class="cs ${{cO?'op':''}}"><div class="pw"><div class="tg">${{pbt}}</div></div>${{aP&&P[aP]?chart(P[aP],t):''}}${{pnl}}</div>`:''}}
@@ -834,12 +834,14 @@ if "hub_data" not in st.session_state:
 if "data_source" not in st.session_state:
     st.session_state.data_source = "csv"
 
-# Compact refresh button
-st.markdown('<div style="display:flex;justify-content:flex-end;padding:4px 24px 0">', unsafe_allow_html=True)
-col1, col2, col3, col4, col5 = st.columns([1,1,1,1,0.4])
-with col5:
-    refresh = st.button("🔄", help="Refresh from HubSpot", use_container_width=False)
-if refresh:
+# Check for refresh trigger via URL parameter
+if st.query_params.get("refresh") == "1":
+    if HUBSPOT_SERVICE_KEY:
+        with st.spinner("Pulling live data from HubSpot..."):
+            st.session_state.hub_data = fetch_hubspot_counts()
+            st.session_state.data_source = "hubspot"
+        st.query_params.clear()
+        st.rerun()
         if not HUBSPOT_SERVICE_KEY:
             st.error("Add HUBSPOT_API_KEY in Streamlit Settings > Secrets first.")
         else:
