@@ -39,12 +39,12 @@ BW_EMAIL_MKT_CSV = os.path.join(APP_DIR, "Copy of Drupal data cleaning - Sheet3.
 EXTRA_EMAIL_GDRIVE_ID = "1UE_rb7o5ODjSIpHJFSzqBNJHV37-Xht-"
 EXTRA_EMAIL_CSV = os.path.join(APP_DIR, "tcs-email-using-combined.csv")
 # Individual contribution: read directly from Google Sheets (no download needed)
-GSHEET_ID = "1FJovgRvuBIKKZK1Q2gbthDXhhm6vHASnbCJqZ5sGit4"
+GSHEET_PUB_KEY = "2PACX-1vRnDbY4gZeBoX_QspGXBhFVwy9f2kSuJ64XEvpgaFmcWtZqR7F8Dh6IeMr4q8khu-1Add_fyu93_hg0"
 GSHEET_TABS = {
-    "kishore": "kishore data count",
-    "ilakkiya": "Illakkia Data count",
-    "dharanshri": "Dharanishri Data Count",
-    "sales": "sales",
+    "kishore": {"gid": 56889493, "name": "Kishore"},
+    "ilakkiya": {"gid": 389171671, "name": "Ilakkiya"},
+    "dharanshri": {"gid": 422158322, "name": "Dharanshri"},
+    "sales": {"gid": 231515284, "name": "Sales"},
 }
 
 # Brand TAG mapping (all lowercase keys for case-insensitive matching)
@@ -476,21 +476,15 @@ def load_email_mkt(csv_path, brand_rows, extra_emails=None):
 # ════════════════════════════════════════
 # PARSE CONTRIBUTION SHEETS
 # ════════════════════════════════════════
-def read_gsheet_tab(tab_name):
-    """Read a Google Sheet tab as a pandas DataFrame."""
-    import urllib.parse
-    # Try multiple URL formats
-    urls = [
-        f"https://docs.google.com/spreadsheets/d/{GSHEET_ID}/gviz/tq?tqx=out:csv&sheet={urllib.parse.quote(tab_name)}",
-        f"https://docs.google.com/spreadsheets/d/{GSHEET_ID}/export?format=csv&sheet={urllib.parse.quote(tab_name)}",
-    ]
-    for url in urls:
-        try:
-            df = pd.read_csv(url, on_bad_lines="skip", encoding="utf-8", encoding_errors="replace")
-            if len(df) > 0:
-                return df
-        except:
-            continue
+def read_gsheet_tab(gid):
+    """Read a Google Sheet tab as a pandas DataFrame using published URL."""
+    url = f"https://docs.google.com/spreadsheets/d/e/{GSHEET_PUB_KEY}/pub?gid={gid}&single=true&output=csv"
+    try:
+        df = pd.read_csv(url, on_bad_lines="skip", encoding="utf-8", encoding_errors="replace")
+        if len(df) > 0:
+            return df
+    except:
+        pass
     return None
 
 
@@ -501,10 +495,10 @@ def parse_contribution():
 
     PERSON_DISPLAY = {"kishore": "Kishore", "ilakkiya": "Ilakkiya", "dharanshri": "Dharanshri"}
 
-    for key, tab_name in GSHEET_TABS.items():
+    for key, tab_info in GSHEET_TABS.items():
         if key == "sales":
             continue  # Handle sales separately
-        df = read_gsheet_tab(tab_name)
+        df = read_gsheet_tab(tab_info["gid"])
         if df is None or len(df) == 0:
             continue
 
@@ -575,9 +569,9 @@ def parse_contribution():
             if not month_key:
                 continue
 
-            # Get count
+            # Get count (handle commas like "4,335")
             try:
-                count = int(float(row[count_col]))
+                count = int(float(str(row[count_col]).replace(",", "")))
             except:
                 continue
             if count <= 0:
@@ -600,11 +594,12 @@ def parse_contribution():
                 person_months.append({"month": f"{mk} 2026", "total": sum(e["count"] for e in entries), "entries": entries})
 
         if person_months:
-            display_name = PERSON_DISPLAY.get(key, key.capitalize())
+            display_name = tab_info["name"]
             persons[key] = {"name": display_name, "months": person_months}
 
     # Parse sales tab
-    sales_df = read_gsheet_tab(GSHEET_TABS.get("sales", ""))
+    sales_gid = GSHEET_TABS.get("sales", {}).get("gid")
+    sales_df = read_gsheet_tab(sales_gid) if sales_gid else None
     if sales_df is not None and len(sales_df) > 0:
         sales_df.columns = [str(c).strip().lower() for c in sales_df.columns]
         name_col = count_col = month_col = tech_col = None
@@ -632,9 +627,11 @@ def parse_contribution():
                     continue
 
                 # Normalize name
-                for pkey in PERSON_DISPLAY:
-                    if pkey in name or name in pkey:
-                        name = pkey
+                name_map = {"dharanishri": "dharanshri", "dharanshri": "dharanshri",
+                           "kishore": "kishore", "ilakkiya": "ilakkiya", "illakkia": "ilakkiya"}
+                for variant, normalized in name_map.items():
+                    if variant in name:
+                        name = normalized
                         break
 
                 if name not in sales_data:
@@ -898,7 +895,10 @@ document.getElementById('app').innerHTML=`
 ${{main}}
 ${{pks.length?`<div class="cw"><button class="cb ${{cO?'on':''}}" onclick="tC()"><span class="ar">&#9660;</span>Individual Contribution</button></div>
 <div class="cs ${{cO?'op':''}}"><div class="pw"><div class="tg">${{pbt}}</div></div>${{aP&&P[aP]?chart(P[aP],t):''}}
-${{(()=>{{const sd=SL[aP];if(!sd)return '';const mos=Object.keys(sd).sort((a,b)=>{{const mo={{'jan':1,'feb':2,'mar':3,'apr':4,'may':5,'jun':6,'jul':7,'aug':8,'sep':9,'oct':10,'nov':11,'dec':12}};return (mo[a.toLowerCase().slice(0,3)]||0)-(mo[b.toLowerCase().slice(0,3)]||0)}});const total=Object.values(sd).reduce((s,v)=>s+v,0);return `<div class="pn" style="margin-top:0"><div style="display:flex;align-items:center;justify-content:space-between;cursor:pointer" onclick="document.getElementById('sales-detail').style.display=document.getElementById('sales-detail').style.display==='none'?'block':'none'"><div class="pt" style="color:#F59E0B;margin:0">📱 Mobile Numbers Enriched & Shared to Sales: ${{fmt(total)}}</div><span style="font-size:12px;color:var(--txt-s)">▼ Click to expand</span></div><div id="sales-detail" style="display:none;margin-top:16px"><div style="display:flex;gap:12px;flex-wrap:wrap">${{mos.map(m=>`<div style="background:var(--bg-el);padding:12px 20px;border-radius:10px;border:1px solid var(--bdr);text-align:center;min-width:80px"><div style="font-size:11px;color:var(--txt-s);font-weight:600;margin-bottom:4px">${{m}}</div><div style="font-size:18px;font-weight:800;color:var(--txt)">${{fmt(sd[m])}}</div></div>`).join('')}}</div></div></div>`;}})()??(()=>'')()}}
+${{(()=>{{const sd=SL[aP];if(!sd)return '';const mos=Object.keys(sd).sort((a,b)=>{{const mo={{'jan':1,'feb':2,'mar':3,'apr':4,'may':5,'jun':6,'jul':7,'aug':8,'sep':9,'oct':10,'nov':11,'dec':12}};return (mo[a.toLowerCase().slice(0,3)]||0)-(mo[b.toLowerCase().slice(0,3)]||0)}});const total=Object.values(sd).reduce((s,v)=>s+v,0);const smx=Math.max(...Object.values(sd));const sst=4;const ssv=Math.ceil(smx/sst/1000)*1000;const scl=ssv*sst;
+let sg='',sy='';for(let i=0;i<=sst;i++){{const pc=(i/sst)*100,v=ssv*i;sg+=`<div class="gl" style="bottom:${{pc}}%"></div>`;sy+=`<div class="yl">${{v>=1000?(v/1000).toFixed(0)+'K':v}}</div>`}}
+const sbs=mos.map(m=>{{const h=scl>0?(sd[m]/scl)*100:0;return`<div class="gbg"><div class="gb" style="height:${{Math.max(h,3)}}%;background:linear-gradient(180deg,#FBBF24,#F59E0B);box-shadow:0 0 8px rgba(245,158,11,0.2)"><div class="gv">${{fmt(sd[m])}}</div><div class="gbl">${{m}}</div></div></div>`}}).join('');
+return `<div class="gp"><div class="gt" style="color:#F59E0B">📱 Mobile Numbers Enriched & Shared to Sales: ${{fmt(total)}}</div><div class="ga"><div class="gy">${{sy}}</div><div class="gg">${{sg}}</div><div class="gbs">${{sbs}}</div></div></div>`;}})()??(()=>'')()}}
 ${{pnl}}
 <div style="text-align:center;padding:16px 0"><button onclick="window.location.reload()" style="padding:6px 16px;background:#F59E0B;color:#fff;border:none;border-radius:6px;font-size:11px;font-weight:700;font-family:inherit;cursor:pointer">🔄 Refresh Sheet Data</button></div>
 </div>`:''}}
