@@ -772,8 +772,11 @@ function cc(c){{return{{'ConversionBox':'#6366F1','Drupal':'#3B82F6','TCS':'#433
 function sB(k){{aB=k;mF='all';render()}}function tC(){{cO=!cO;render()}}function sP(k){{aP=k;render()}}function tM(p,m){{const k=p+'-'+m;oM[k]=!oM[k];render()}}function sM(f){{mF=f;render()}}
 function chart(p,t){{const ms=[...p.months].reverse(),mx=Math.max(...ms.map(m=>m.total)),st=4,sv=Math.ceil(mx/st/1000)*1000,cl=sv*st;
 let g='',y='';for(let i=0;i<=st;i++){{const pc=(i/st)*100,v=sv*i;g+=`<div class="gl" style="bottom:${{pc}}%"></div>`;y+=`<div class="yl">${{v>=1000?(v/1000).toFixed(0)+'K':v}}</div>`}}
+// Target lines: 3K red, 5K yellow, 10K green
+const targets=[{{v:3000,c:'#EF4444',l:'3K'}},{{v:5000,c:'#F59E0B',l:'5K'}},{{v:10000,c:'#10B981',l:'10K'}}];
+let tl='';targets.forEach(t=>{{if(t.v<=cl){{const tp=(t.v/cl)*100;tl+=`<div style="position:absolute;left:0;right:0;bottom:${{tp}}%;height:2px;background:${{t.c}};opacity:0.5;z-index:2"></div><div style="position:absolute;right:-30px;bottom:${{tp-1}}%;font-size:9px;font-weight:700;color:${{t.c}};z-index:3">${{t.l}}</div>`}}}});
 const[c1,c2]=t.c;const bs=ms.map(m=>{{const h=cl>0?(m.total/cl)*100:0;return`<div class="gbg"><div class="gb" style="height:${{Math.max(h,3)}}%;background:linear-gradient(180deg,${{c2}},${{c1}})"><div class="gv">${{fmt(m.total)}}</div><div class="gbl">${{m.month.split(' ')[0]}}</div></div></div>`}}).join('');
-return`<div class="gp"><div class="gt">${{p.name}}'s Monthly Contribution</div><div class="ga"><div class="gy">${{y}}</div><div class="gg">${{g}}</div><div class="gbs">${{bs}}</div></div></div>`}}
+return`<div class="gp"><div class="gt">${{p.name}}'s Monthly Contribution</div><div class="ga" style="padding-right:40px"><div class="gy">${{y}}</div><div class="gg">${{g}}${{tl}}</div><div class="gbs">${{bs}}</div></div></div>`}}
 function render(){{const b=B[aB],t=TH[aB]||TH.others;th(aB);const isO=aB==='others';
 const ov=OV[aB]||{{}};let ovH='';for(const[ob,cnt] of Object.entries(ov)){{const nm={{tcs:'TCS',drupal:'BinaryWorks',conversionbox:'ConversionBox'}};ovH+=`<span class="olt">${{fmt(cnt)}} also in ${{nm[ob]||ob}}</span>`}}
 const mkt=EM[aB]||null;const hM=!!mkt;const mc=hM?'hm':'';
@@ -790,7 +793,24 @@ let hd=`<div class="br ${{mc}}" style="margin-bottom:4px"><div class="bch l">${{
 let rw=b.rows.map(r=>{{let mv='',nv='';if(hM&&mkt.by_tech[r.label]){{const mt=mkt.by_tech[r.label];mv=fmt(mF==='all'?mt.total:mF==='opener'?mt.openers:mt.non_openers);nv=fmt(mt.new_emails)}}return`<div class="br ${{mc}}"><div class="bl">${{r.label}}</div><div class="bt"><div class="bf" style="width:${{(r.leads/mx*100).toFixed(1)}}%;background:var(--grad-bar)"></div></div><div class="bv">${{fmt(r.leads)}}</div><div class="bv sec">${{fmt(r.websites)}}</div>${{hM?`<div class="bv mkt">${{mv}}</div><div class="bv new">${{nv}}</div>`:''}} </div>`}}).join('');
 let tm='',tn='';if(hM){{tm=fmt(mF==='all'?mkt.total:mF==='opener'?mkt.openers:mkt.non_openers);tn=fmt(mkt.new_total)}}
 let tot=`<div class="tr ${{mc}}"><div class="bl">TOTAL</div><div></div><div class="bv">${{fmt(b.totals.leads)}}</div><div class="bv sec">${{fmt(b.totals.websites)}}</div>${{hM?`<div class="bv mkt">${{tm}}</div><div class="bv new">${{tn}}</div>`:''}}</div>`;
-main=st+`<div class="pn"><div style="display:flex;align-items:center;flex-wrap:wrap;margin-bottom:22px"><div class="pt" style="margin:0">${{b.colLabel}} Breakdown</div>${{mtg}}</div><div class="bc">${{hd}}${{rw}}${{tot}}</div></div>`}}}}
+main=st+`<div class="pn"><div style="display:flex;align-items:center;flex-wrap:wrap;margin-bottom:22px"><div class="pt" style="margin:0">${{b.colLabel}} Breakdown</div>${{mtg}}</div><div class="bc">${{hd}}${{rw}}${{tot}}</div></div>`;
+// BinaryWorks split: show Drupal and WordPress side by side
+if(aB==='drupal'){{
+const drupalRows=b.rows.filter(r=>r.label.toLowerCase().startsWith('drupal'));
+const wpRows=b.rows.filter(r=>r.label.toLowerCase().startsWith('wordpress'));
+const otherRows=b.rows.filter(r=>!r.label.toLowerCase().startsWith('drupal')&&!r.label.toLowerCase().startsWith('wordpress'));
+const dTotal=drupalRows.reduce((s,r)=>s+r.leads,0);const wTotal=wpRows.reduce((s,r)=>s+r.leads,0);const oTotal=otherRows.reduce((s,r)=>s+r.leads,0);
+const dMax=Math.max(...drupalRows.map(r=>r.leads),1);const wMax=Math.max(...wpRows.map(r=>r.leads),1);
+function mkRows(rows,mxL){{return rows.map(r=>{{let mv='',nv='';if(hM&&mkt.by_tech[r.label]){{const mt=mkt.by_tech[r.label];mv=fmt(mF==='all'?mt.total:mF==='opener'?mt.openers:mt.non_openers);nv=fmt(mt.new_emails)}}return`<div class="br ${{mc}}"><div class="bl">${{r.label}}</div><div class="bt"><div class="bf" style="width:${{(r.leads/mxL*100).toFixed(1)}}%;background:var(--grad-bar)"></div></div><div class="bv">${{fmt(r.leads)}}</div><div class="bv sec">${{fmt(r.websites)}}</div>${{hM?`<div class="bv mkt">${{mv}}</div><div class="bv new">${{nv}}</div>`:''}} </div>`}}).join('')}}
+const dTotMkt=hM?drupalRows.reduce((s,r)=>{{const mt=mkt.by_tech[r.label];return s+(mt?mt.total:0)}},0):0;
+const wTotMkt=hM?wpRows.reduce((s,r)=>{{const mt=mkt.by_tech[r.label];return s+(mt?mt.total:0)}},0):0;
+const dTotNew=hM?drupalRows.reduce((s,r)=>{{const mt=mkt.by_tech[r.label];return s+(mt?mt.new_emails:0)}},0):0;
+const wTotNew=hM?wpRows.reduce((s,r)=>{{const mt=mkt.by_tech[r.label];return s+(mt?mt.new_emails:0)}},0):0;
+main=st+`<div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:28px">
+<div class="pn" style="margin:0"><div style="display:flex;align-items:center;flex-wrap:wrap;margin-bottom:18px"><div class="pt" style="margin:0;color:#8B5CF6">🔮 Drupal</div>${{mtg}}</div><div class="bc">${{hd}}${{mkRows(drupalRows,dMax)}}<div class="tr ${{mc}}"><div class="bl">SUBTOTAL</div><div></div><div class="bv">${{fmt(dTotal)}}</div><div class="bv sec">${{fmt(drupalRows.reduce((s,r)=>s+r.websites,0))}}</div>${{hM?`<div class="bv mkt">${{fmt(dTotMkt)}}</div><div class="bv new">${{fmt(dTotNew)}}</div>`:''}}</div></div></div>
+<div class="pn" style="margin:0"><div style="display:flex;align-items:center;flex-wrap:wrap;margin-bottom:18px"><div class="pt" style="margin:0;color:#3B82F6">📘 WordPress</div></div><div class="bc">${{hd.replace(b.colLabel,'Category')}}${{mkRows(wpRows,wMax)}}${{mkRows(otherRows,wMax)}}<div class="tr ${{mc}}"><div class="bl">SUBTOTAL</div><div></div><div class="bv">${{fmt(wTotal+oTotal)}}</div><div class="bv sec">${{fmt(wpRows.concat(otherRows).reduce((s,r)=>s+r.websites,0))}}</div>${{hM?`<div class="bv mkt">${{fmt(wTotMkt)}}</div><div class="bv new">${{fmt(wTotNew)}}</div>`:''}}</div></div></div>
+</div>`;
+}}}}}}
 let pnl='';for(const[pk,p] of Object.entries(P)){{let mH='';p.months.forEach((m,mi)=>{{const op=oM[pk+'-'+mi];mH+=`<div class="mr"><div class="mh" onclick="tM('${{pk}}',${{mi}})"><div class="ml"><span class="ma ${{op?'op':''}}">&#9654;</span><span class="mm">${{m.month}}</span><span class="me">${{m.entries.length}} entries</span></div><span class="mc">${{fmt(m.total)}}</span></div><div class="md ${{op?'op':''}}">${{m.entries.map(e=>`<div class="dr"><div class="dd">${{e.date}}</div><div><span class="dt" style="background:${{cc(e.category)}}15;color:${{cc(e.category)}};border:1px solid ${{cc(e.category)}}40">${{e.category}}</span></div><div class="dc">${{fmt(e.count)}}</div></div>`).join('')}}<div class="msw"><span>Subtotal</span><span>${{fmt(m.total)}}</span></div></div></div>`}});pnl+=`<div class="pp ${{aP===pk?'vis':''}}"><div class="pph"><span class="ppn">${{p.name}}</span></div>${{mH}}</div>`}}
 const pks=Object.keys(P);const pbt=pks.map(k=>`<button class="tb ${{aP===k?'on':''}}" onclick="sP('${{k}}')">${{P[k].name}}</button>`).join('');
 document.getElementById('app').innerHTML=`
@@ -814,10 +834,15 @@ if "hub_data" not in st.session_state:
 if "data_source" not in st.session_state:
     st.session_state.data_source = "csv"
 
-# Refresh button (above dashboard)
-col1, col2 = st.columns([6, 1])
-with col2:
-    if st.button("🔄 Refresh from HubSpot", use_container_width=True):
+# Refresh button and source indicator (compact)
+col1, col2, col3 = st.columns([5, 2, 1])
+with col1:
+    if st.session_state.data_source == "hubspot":
+        st.caption("📡 Live HubSpot data")
+    else:
+        st.caption("")
+with col3:
+    if st.button("🔄 HubSpot", use_container_width=True):
         if not HUBSPOT_SERVICE_KEY:
             st.error("Add HUBSPOT_API_KEY in Streamlit Settings > Secrets first.")
         else:
@@ -825,13 +850,6 @@ with col2:
                 st.session_state.hub_data = fetch_hubspot_counts()
                 st.session_state.data_source = "hubspot"
             st.rerun()
-
-# Show data source indicator
-with col1:
-    if st.session_state.data_source == "hubspot":
-        st.caption("📡 Showing live HubSpot data (websites count unavailable via API)")
-    else:
-        st.caption("📁 Showing data from HubSpot export file")
 
 # Load data
 data = load_all()
