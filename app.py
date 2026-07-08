@@ -543,12 +543,34 @@ def parse_contribution():
                         break
                 date_str = month_key or mv
             elif date_col and pd.notna(row.get(date_col)):
-                try:
-                    dv = pd.to_datetime(row[date_col])
-                    month_key = dv.strftime("%b")
-                    date_str = dv.strftime("%b %d")
-                except:
-                    continue
+                dv_str = str(row[date_col]).strip()
+                # Try multiple date formats
+                month_key = None
+                date_str = ""
+                # First: check if it starts with a month name (e.g. "Jan 2026", "Jan")
+                for mn in MONTH_ORDER:
+                    if dv_str.lower().startswith(mn):
+                        month_key = mn.capitalize()
+                        date_str = month_key
+                        break
+                # Second: try parsing as full date (e.g. "23 Jan 2026", "2026-01-23")
+                if not month_key:
+                    try:
+                        dv = pd.to_datetime(dv_str, dayfirst=True)
+                        month_key = dv.strftime("%b")
+                        date_str = dv.strftime("%b %d")
+                    except:
+                        pass
+                # Third: check if day comes first (e.g. "23 Jan 2026")
+                if not month_key:
+                    parts = dv_str.split()
+                    for p in parts:
+                        for mn in MONTH_ORDER:
+                            if p.lower().startswith(mn):
+                                month_key = mn.capitalize()
+                                date_str = dv_str
+                                break
+                        if month_key: break
 
             if not month_key:
                 continue
@@ -876,7 +898,7 @@ document.getElementById('app').innerHTML=`
 ${{main}}
 ${{pks.length?`<div class="cw"><button class="cb ${{cO?'on':''}}" onclick="tC()"><span class="ar">&#9660;</span>Individual Contribution</button></div>
 <div class="cs ${{cO?'op':''}}"><div class="pw"><div class="tg">${{pbt}}</div></div>${{aP&&P[aP]?chart(P[aP],t):''}}
-${{(()=>{{const sd=SL[aP];if(!sd)return '';const mos=Object.keys(sd).sort((a,b)=>{{const mo={{'jan':1,'feb':2,'mar':3,'apr':4,'may':5,'jun':6,'jul':7,'aug':8,'sep':9,'oct':10,'nov':11,'dec':12}};return (mo[a.toLowerCase().slice(0,3)]||0)-(mo[b.toLowerCase().slice(0,3)]||0)}});const total=Object.values(sd).reduce((s,v)=>s+v,0);return `<div class="pn" style="margin-top:0"><div class="pt" style="color:#F59E0B">📱 Mobile Numbers Enriched & Shared to Sales: ${{fmt(total)}}</div><div style="display:flex;gap:12px;flex-wrap:wrap">${{mos.map(m=>`<div style="background:var(--bg-el);padding:12px 20px;border-radius:10px;border:1px solid var(--bdr);text-align:center;min-width:80px"><div style="font-size:11px;color:var(--txt-s);font-weight:600;margin-bottom:4px">${{m}}</div><div style="font-size:18px;font-weight:800;color:var(--txt)">${{fmt(sd[m])}}</div></div>`).join('')}}</div></div>`;}})()??(()=>'')()}}
+${{(()=>{{const sd=SL[aP];if(!sd)return '';const mos=Object.keys(sd).sort((a,b)=>{{const mo={{'jan':1,'feb':2,'mar':3,'apr':4,'may':5,'jun':6,'jul':7,'aug':8,'sep':9,'oct':10,'nov':11,'dec':12}};return (mo[a.toLowerCase().slice(0,3)]||0)-(mo[b.toLowerCase().slice(0,3)]||0)}});const total=Object.values(sd).reduce((s,v)=>s+v,0);return `<div class="pn" style="margin-top:0"><div style="display:flex;align-items:center;justify-content:space-between;cursor:pointer" onclick="document.getElementById('sales-detail').style.display=document.getElementById('sales-detail').style.display==='none'?'block':'none'"><div class="pt" style="color:#F59E0B;margin:0">📱 Mobile Numbers Enriched & Shared to Sales: ${{fmt(total)}}</div><span style="font-size:12px;color:var(--txt-s)">▼ Click to expand</span></div><div id="sales-detail" style="display:none;margin-top:16px"><div style="display:flex;gap:12px;flex-wrap:wrap">${{mos.map(m=>`<div style="background:var(--bg-el);padding:12px 20px;border-radius:10px;border:1px solid var(--bdr);text-align:center;min-width:80px"><div style="font-size:11px;color:var(--txt-s);font-weight:600;margin-bottom:4px">${{m}}</div><div style="font-size:18px;font-weight:800;color:var(--txt)">${{fmt(sd[m])}}</div></div>`).join('')}}</div></div></div>`;}})()??(()=>'')()}}
 ${{pnl}}
 <div style="text-align:center;padding:16px 0"><button onclick="window.location.reload()" style="padding:6px 16px;background:#F59E0B;color:#fff;border:none;border-radius:6px;font-size:11px;font-weight:700;font-family:inherit;cursor:pointer">🔄 Refresh Sheet Data</button></div>
 </div>`:''}}
