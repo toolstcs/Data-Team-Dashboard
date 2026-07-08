@@ -479,12 +479,19 @@ def load_email_mkt(csv_path, brand_rows, extra_emails=None):
 def read_gsheet_tab(tab_name):
     """Read a Google Sheet tab as a pandas DataFrame."""
     import urllib.parse
-    url = f"https://docs.google.com/spreadsheets/d/{GSHEET_ID}/gviz/tq?tqx=out:csv&sheet={urllib.parse.quote(tab_name)}"
-    try:
-        df = pd.read_csv(url, on_bad_lines="skip", encoding="utf-8", encoding_errors="replace")
-        return df
-    except Exception as e:
-        return None
+    # Try multiple URL formats
+    urls = [
+        f"https://docs.google.com/spreadsheets/d/{GSHEET_ID}/gviz/tq?tqx=out:csv&sheet={urllib.parse.quote(tab_name)}",
+        f"https://docs.google.com/spreadsheets/d/{GSHEET_ID}/export?format=csv&sheet={urllib.parse.quote(tab_name)}",
+    ]
+    for url in urls:
+        try:
+            df = pd.read_csv(url, on_bad_lines="skip", encoding="utf-8", encoding_errors="replace")
+            if len(df) > 0:
+                return df
+        except:
+            continue
+    return None
 
 
 def parse_contribution():
@@ -656,6 +663,57 @@ def load_all():
     contrib = parse_contribution()
     data["persons"] = contrib.get("persons", {})
     data["sales"] = contrib.get("sales", {})
+
+    # Fallback: if no persons from Google Sheets, try xlsx file
+    if not data["persons"]:
+        for fname in ["Copy of Over all DB .xlsx", "Copy of Over all DB.xlsx", "Copy_of_Over_all_DB.xlsx"]:
+            p = os.path.join(APP_DIR, fname)
+            if os.path.exists(p):
+                try:
+                    wb = openpyxl.load_workbook(p, data_only=True)
+                    # Simple parse from xlsx as fallback
+                    for sn in wb.sheetnames:
+                        pname = None
+                        for check in ["kishore","ilakkiya","illakkia","dharanshri","dharanishri"]:
+                            if check in sn.lower():
+                                pname = check.capitalize()
+                                if pname == "Illakkia": pname = "Ilakkiya"
+                                if pname == "Dharanishri": pname = "Dharanshri"
+                                break
+                        if not pname: continue
+                        ws = wb[sn]
+                        rows_data = [list(r) for r in ws.iter_rows(min_row=1, values_only=True)]
+                        if len(rows_data) < 2: continue
+                        # Simple: assume Month col 0, Tech col 1 or 2, Count col 2 or 3
+                        months_d = OrderedDict()
+                        for row in rows_data[1:]:
+                            try:
+                                mv = str(row[0]).strip() if row[0] else ""
+                                mk = None
+                                for mn in MONTH_ORDER:
+                                    if mv.lower().startswith(mn): mk = mn.capitalize(); break
+                                if not mk and isinstance(row[0], datetime): mk = row[0].strftime("%b")
+                                if not mk: continue
+                                # Find count (first numeric value)
+                                count = None
+                                cat = "General"
+                                for i, v in enumerate(row[1:], 1):
+                                    if v is None: continue
+                                    try:
+                                        count = int(float(v)); break
+                                    except:
+                                        if not cat or cat == "General": cat = str(v).strip()
+                                if not count or count <= 0: continue
+                                if mk not in months_d: months_d[mk] = []
+                                months_d[mk].append({"date": mk, "category": cat, "count": count})
+                            except: continue
+                        pm = [{"month": f"{m} 2026", "total": sum(e["count"] for e in months_d[m]), "entries": months_d[m]}
+                              for m in sorted(months_d.keys(), key=lambda x: MONTH_ORDER.get(x.lower()[:3],0), reverse=True)]
+                        if pm: data["persons"][pname.lower()] = {"name": pname, "months": pm}
+                    wb.close()
+                except: pass
+                break
+
     return data
 
 
