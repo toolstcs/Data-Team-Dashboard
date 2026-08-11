@@ -28,7 +28,28 @@ HS_PROPS = {
     "ecom": "e_commerce_technologies",
     "drupal": "drupal_partners__cms_",
     "cb": "conversionbox_competitors",
+    # Product Count is auto-resolved from its label at runtime (see
+    # resolve_product_count_prop). This value is only the fallback guess used if
+    # the live property list cannot be fetched.
+    "products": "product_count",
 }
+
+# Human label of the Product Count column, used to auto-resolve its real
+# internal name against the live HubSpot property list. HubSpot internal names
+# cannot contain spaces, so the label and the internal name differ.
+PRODUCT_COUNT_LABEL = "Product Count"
+
+# Bands for the ConversionBox "200+ Products" section. Contacts with Product
+# Count below 200 are dropped entirely. Bands are inclusive on both ends and do
+# not overlap, so every kept contact lands in exactly one band. hi = None means
+# open-ended (the top band).
+PRODUCT_COUNT_MIN = 200
+PRODUCT_BANDS = [
+    {"label": "200 - 999", "lo": 200, "hi": 999},
+    {"label": "1K - 9,999", "lo": 1000, "hi": 9999},
+    {"label": "10K - 99,999", "lo": 10000, "hi": 99999},
+    {"label": "100K+", "lo": 100000, "hi": None},
+]
 
 HUBSPOT_GDRIVE_ID = "1iEJV-vbJuOxdBi_p_INBP8B43uOOCsAH"
 HUBSPOT_CSV = os.path.join(APP_DIR, "all-contacts.csv")
@@ -51,8 +72,11 @@ GSHEET_TABS = {
 BRAND_TAGS = {"tcs": "tcs", "binaryworks": "drupal", "drupal": "drupal",
               "conversionbox": "conversionbox", "conversionbox compitetor": "conversionbox"}
 
-OTHERS_TAGS = ["manufacturing", "conversionbox 200+ products", "higher education", "fin tech"]
-OTHERS_DISPLAY = {"manufacturing": "Manufacturing", "conversionbox 200+ products": "Conversionbox 200+ Products",
+# "conversionbox 200+ products" was removed from Others: it is now a section
+# inside the ConversionBox tab, driven by the Product Count column instead of
+# this tag.
+OTHERS_TAGS = ["manufacturing", "higher education", "fin tech"]
+OTHERS_DISPLAY = {"manufacturing": "Manufacturing",
                   "higher education": "Higher Education", "fin tech": "Fin Tech"}
 
 TCS_MAIN_TECHS = ["Shopify", "BigCommerce", "WooCommerce", "Magento", "Shopify Plus"]
@@ -131,18 +155,92 @@ def hs_prop_filter(prop, operator, value=None):
     return f
 
 
+def _norm_label(s):
+    """Lowercase and strip everything that is not a letter or digit."""
+    import re
+    return re.sub(r"[^a-z0-9]", "", str(s).lower())
+
+
+@st.cache_data(ttl=86400, show_spinner=False)
+def hs_list_contact_properties():
+    """
+    All contact properties as {internal_name: label}. Cached for a day, since
+    the schema barely changes. Empty dict on any failure, so callers fall back
+    to the guessed name rather than crash.
+    """
+    if not HUBSPOT_SERVICE_KEY:
+        return {}
+    url = "https://api.hubapi.com/crm/v3/properties/contacts"
+    headers = {"Authorization": f"Bearer {HUBSPOT_SERVICE_KEY}"}
+    try:
+        r = requests.get(url, headers=headers, timeout=15)
+        if r.status_code != 200:
+            return {}
+        return {p["name"]: p.get("label", p["name"]) for p in r.json().get("results", [])}
+    except Exception:
+        return {}
+
+
+def resolve_product_count_prop():
+    """
+    Find the real internal name of the Product Count column.
+
+    Order: trust the configured guess if it genuinely exists in the portal,
+    otherwise match on the exact normalised label ("Product Count"), never a
+    substring. Returns (internal_name_or_None, note_for_display).
+    """
+    props = hs_list_contact_properties()
+    guess = HS_PROPS.get("products")
+
+    if not props:
+        # No live schema (no key, or the call failed). Use the guess and say so.
+        return guess, f"assumed `{guess}` (could not read live properties)"
+
+    if guess in props:
+        return guess, f"`{guess}`"
+
+    target = _norm_label(PRODUCT_COUNT_LABEL)
+    matches = [name for name, label in props.items() if _norm_label(label) == target]
+    if matches:
+        # Prefer a non hs_ custom property if several share the label.
+        matches.sort(key=lambda n: (n.startswith("hs_"), n))
+        return matches[0], f"`{matches[0]}` (matched by label '{PRODUCT_COUNT_LABEL}')"
+
+    return None, (
+        f"NOT FOUND. No property is named `{guess}` or labelled "
+        f"'{PRODUCT_COUNT_LABEL}'. The 200+ Products section will be empty."
+    )
+
+
+def hs_product_band_count(prop, lo, hi):
+    """
+    Count contacts whose Product Count falls in [lo, hi].
+
+    HubSpot number properties support GTE/LTE. hi=None means open-ended (>= lo).
+    Both filters sit in one group, so they are AND-ed.
+    """
+    filters = [hs_prop_filter(prop, "GTE", str(lo))]
+    if hi is not None:
+        filters.append(hs_prop_filter(prop, "LTE", str(hi)))
+    return hs_search_count(filters)
+
+
 def fetch_hubspot_counts():
     """Fetch live counts from HubSpot Search API."""
     import time
     result = {"tcs": {"rows": [], "totals": {"leads": 0, "websites": 0}},
               "drupal": {"rows": [], "totals": {"leads": 0, "websites": 0}},
               "conversionbox": {"rows": [], "totals": {"leads": 0, "websites": 0}},
+              # products: the ConversionBox "200+ Products" section, banded by
+              # Product Count. Kept separate from the competitors rows above.
+              "products": {"rows": [], "totals": {"leads": 0, "websites": 0}, "note": ""},
               "others": [], "overlap": {"tcs": {}, "drupal": {}, "conversionbox": {}}}
 
     ep = HS_PROPS["ecom"]
     dp = HS_PROPS["drupal"]
     cp = HS_PROPS["cb"]
     tp = HS_PROPS["tag"]
+    pc, pc_note = resolve_product_count_prop()
 
     # ── TCS: e-Commerce Technologies ──
     tcs_techs = {
@@ -219,6 +317,21 @@ def fetch_hubspot_counts():
         time.sleep(0.3)
     result["conversionbox"]["totals"]["leads"] = cb_total
 
+    # ── ConversionBox: 200+ Products (banded by Product Count) ──
+    # Everything below PRODUCT_COUNT_MIN is excluded: the section total is the
+    # sum of the bands, not a HAS_PROPERTY count, so contacts under 200 never
+    # enter the numbers.
+    result["products"]["note"] = pc_note
+    if pc:
+        prod_total = 0
+        for band in PRODUCT_BANDS:
+            c = hs_product_band_count(pc, band["lo"], band["hi"])
+            result["products"]["rows"].append(
+                {"label": band["label"], "leads": c, "websites": 0, "emails": []})
+            prod_total += c
+            time.sleep(0.3)
+        result["products"]["totals"]["leads"] = prod_total
+
     # ── Others (TAG based) ──
     for tag_lower, display in OTHERS_DISPLAY.items():
         c = hs_search_count([hs_prop_filter(tp, "EQ", tag_lower)])
@@ -242,6 +355,7 @@ def find_columns(df):
         elif cl == "e-commerce technologies": m["ecom"] = c
         elif cl == "drupal partners (cms)": m["drupal"] = c
         elif cl == "conversionbox competitors": m["cb"] = c
+        elif cl == "product count": m["products"] = c
     # Fallback: flexible matching if exact names didn't work
     if "ecom" not in m:
         for c in df.columns:
@@ -258,6 +372,11 @@ def find_columns(df):
             cl = c.strip().lower()
             if cl.startswith("conversionbox") and "compet" in cl:
                 m["cb"] = c; break
+    if "products" not in m:
+        for c in df.columns:
+            cl = c.strip().lower()
+            if "product" in cl and "count" in cl:
+                m["products"] = c; break
     return m
 
 
@@ -277,6 +396,7 @@ def load_hubspot():
 
     tc, ec, wc = cols["tag"], cols["email"], cols.get("web","")
     ecom_c, drupal_c, cb_c = cols.get("ecom",""), cols.get("drupal",""), cols.get("cb","")
+    prod_c = cols.get("products","")
 
     # Clean
     for c in [tc, ec]:
@@ -375,6 +495,43 @@ def load_hubspot():
         for _,r in cg.iterrows():
             cb_rows.append({"label":r["_comp"],"leads":int(r["leads"]),"websites":int(r["websites"]),"emails":list(cb_emails.get(r["_comp"],set()))})
 
+    # ── ConversionBox: 200+ Products (banded by Product Count) ──
+    # Coerce Product Count to numeric, drop blanks and non-numeric junk, then
+    # keep only >= PRODUCT_COUNT_MIN. Each kept contact lands in exactly one band.
+    prod_rows = []
+    prod_df = pd.DataFrame()
+    if prod_c:
+        pnum = pd.to_numeric(
+            df[prod_c].astype(str).str.replace(",", "", regex=False).str.strip(),
+            errors="coerce",
+        )
+        prod_df = df[pnum >= PRODUCT_COUNT_MIN].copy()
+        prod_df["_pc"] = pnum[pnum >= PRODUCT_COUNT_MIN]
+
+        def band_of(v):
+            for band in PRODUCT_BANDS:
+                if v >= band["lo"] and (band["hi"] is None or v <= band["hi"]):
+                    return band["label"]
+            return None  # below the floor, already filtered out
+
+        if len(prod_df) > 0:
+            prod_df["_band"] = prod_df["_pc"].apply(band_of)
+            pg = prod_df.groupby("_band").agg(
+                leads=(ec, "count"),
+                websites=(wc, "nunique") if wc else (ec, "count"),
+            ).reset_index()
+            prod_emails = {b: set(g[ec]) for b, g in prod_df.groupby("_band")}
+            # Preserve band order rather than group order.
+            for band in PRODUCT_BANDS:
+                m = pg[pg["_band"] == band["label"]]
+                if len(m) > 0:
+                    prod_rows.append({
+                        "label": band["label"],
+                        "leads": int(m["leads"].iloc[0]),
+                        "websites": int(m["websites"].iloc[0]),
+                        "emails": list(prod_emails.get(band["label"], set())),
+                    })
+
     # ── Others ──
     others = []
     for tag_lower in OTHERS_TAGS:
@@ -396,6 +553,7 @@ def load_hubspot():
         "tcs": {"rows":tcs_rows, "totals":totals(tcs_rows,tcs_df)},
         "drupal": {"rows":drupal_rows, "totals":totals(drupal_rows,drupal_df)},
         "conversionbox": {"rows":cb_rows, "totals":totals(cb_rows,cb_df)},
+        "products": {"rows":prod_rows, "totals":totals(prod_rows,prod_df), "note":""},
         "others": others, "overlap": overlap,
     }
 
@@ -653,6 +811,9 @@ def load_all():
             "drupal": {"name":"BinaryWorks","colLabel":"Category","rows":[],"totals":{"leads":0,"websites":0}},
             "conversionbox": {"name":"ConversionBox","colLabel":"Technology","rows":[],"totals":{"leads":0,"websites":0}},
         },
+        # products: the ConversionBox "200+ Products" section, rendered under the
+        # competitors breakdown on the ConversionBox tab.
+        "products": {"rows": [], "totals": {"leads": 0, "websites": 0}, "note": ""},
         "others": [], "overlap": {"tcs":{},"drupal":{},"conversionbox":{}},
         "email_mkt": {"tcs":None,"drupal":None,"conversionbox":None}, "persons": {}, "sales": {},
     }
@@ -667,6 +828,7 @@ def load_all():
         for b in ["tcs","drupal","conversionbox"]:
             data["brands"][b]["rows"] = hub[b]["rows"]
             data["brands"][b]["totals"] = hub[b]["totals"]
+        data["products"] = hub.get("products", data["products"])
         data["others"] = hub["others"]
         data["overlap"] = hub["overlap"]
         # Load extra email list (covers all brands)
@@ -747,6 +909,12 @@ def build_html(data):
                   "totals":bv["totals"]}
     bj = json.dumps(bc)
     oj = json.dumps(data["others"])
+    prod = data.get("products", {"rows": [], "totals": {"leads": 0, "websites": 0}, "note": ""})
+    prodj = json.dumps({
+        "rows": [{"label": r["label"], "leads": r["leads"], "websites": r["websites"]} for r in prod["rows"]],
+        "totals": prod["totals"],
+        "note": prod.get("note", ""),
+    })
     ovj = json.dumps(data["overlap"])
     emj = json.dumps({k: {"total":v["total"],"openers":v["openers"],"non_openers":v["non_openers"],
           "new_total":v["new_total"],"by_tech":v["by_tech"]} if v else None for k,v in data["email_mkt"].items()})
@@ -840,7 +1008,7 @@ const TH={{tcs:{{a:'#4338ED',a2:'#F97316',g:'rgba(67,56,237,.12)',gb:'linear-gra
 drupal:{{a:'#8B5CF6',a2:'#F59E0B',g:'rgba(139,92,246,.12)',gb:'linear-gradient(90deg,#8B5CF6,#C4B5FD)',c:['#8B5CF6','#C4B5FD']}},
 conversionbox:{{a:'#2563EB',a2:'#10B981',g:'rgba(37,99,235,.12)',gb:'linear-gradient(90deg,#2563EB,#60A5FA)',c:['#2563EB','#60A5FA']}},
 others:{{a:'#6B7280',a2:'#9CA3AF',g:'rgba(107,114,128,.12)',gb:'linear-gradient(90deg,#6B7280,#9CA3AF)',c:['#6B7280','#9CA3AF']}}}};
-const B={bj};const OT={oj};const OV={ovj};const EM={emj};const P={pj};const SL={sj};
+const B={bj};const OT={oj};const OV={ovj};const EM={emj};const P={pj};const SL={sj};const PRODUCTS={prodj};
 let aB='tcs',cO=false,aP=Object.keys(P)[0]||'',oM={{}},mF='all';
 function fmt(n){{return n.toLocaleString('en-IN')}}
 function th(t){{const s=document.documentElement.style,h=TH[t]||TH.others;s.setProperty('--accent',h.a);s.setProperty('--accent2',h.a2);s.setProperty('--glow',h.g);s.setProperty('--grad-bar',h.gb);s.setProperty('--grad','linear-gradient(135deg,'+h.a+','+h.a+'aa)')}}
@@ -870,6 +1038,16 @@ let rw=b.rows.map(r=>{{let mv='',nv='';if(hM&&mkt.by_tech[r.label]){{const mt=mk
 let tm='',tn='';if(hM){{tm=fmt(mF==='all'?mkt.total:mF==='opener'?mkt.openers:mkt.non_openers);tn=fmt(mkt.new_total)}}
 let tot=`<div class="tr ${{mc}}"><div class="bl">TOTAL</div><div></div><div class="bv">${{fmt(b.totals.leads)}}</div><div class="bv sec">${{fmt(b.totals.websites)}}</div>${{hM?`<div class="bv mkt">${{tm}}</div><div class="bv new">${{tn}}</div>`:''}}</div>`;
 main=st+`<div class="pn"><div style="display:flex;align-items:center;flex-wrap:wrap;margin-bottom:22px"><div class="pt" style="margin:0">${{b.colLabel}} Breakdown</div>${{mtg}}</div><div class="bc">${{hd}}${{rw}}${{tot}}</div></div>`;
+// ConversionBox: stack the "200+ Products" section (banded by Product Count)
+// below the competitors breakdown. Blanks and sub-200 contacts are already
+// excluded upstream, so these bars only ever show contacts with 200+ products.
+if(aB==='conversionbox' && PRODUCTS && PRODUCTS.rows && PRODUCTS.rows.length){{
+const pr=PRODUCTS.rows;const pMax=Math.max(...pr.map(r=>r.leads),1);
+const pHead=`<div class="br" style="margin-bottom:4px"><div class="bch l">Product Count</div><div></div><div class="bch">Leads</div><div class="bch">Sites</div></div>`;
+const pRows=pr.map(r=>`<div class="br"><div class="bl">${{r.label}}</div><div class="bt"><div class="bf" style="width:${{(r.leads/pMax*100).toFixed(1)}}%;background:var(--grad-bar)"></div></div><div class="bv">${{fmt(r.leads)}}</div><div class="bv sec">${{fmt(r.websites)}}</div></div>`).join('');
+const pTot=`<div class="tr"><div class="bl">TOTAL</div><div></div><div class="bv">${{fmt(PRODUCTS.totals.leads)}}</div><div class="bv sec">${{fmt(PRODUCTS.totals.websites)}}</div></div>`;
+main+=`<div class="pn"><div class="pt">200+ Products <span style="font-size:12px;font-weight:600;color:var(--txt-m)">(by product count, under 200 excluded)</span></div><div class="bc">${{pHead}}${{pRows}}${{pTot}}</div></div>`;
+}}
 // BinaryWorks split: show Drupal and WordPress side by side
 if(aB==='drupal'){{
 const drupalRows=b.rows.filter(r=>r.label.toLowerCase().startsWith('drupal'));
@@ -942,6 +1120,7 @@ if st.session_state.hub_data and st.session_state.data_source == "hubspot":
     for b in ["tcs", "drupal", "conversionbox"]:
         data["brands"][b]["rows"] = hub_live[b]["rows"]
         data["brands"][b]["totals"] = hub_live[b]["totals"]
+    data["products"] = hub_live.get("products", data["products"])
     data["others"] = hub_live["others"]
     data["overlap"] = hub_live["overlap"]
     # Email marketing cross-reference not available via API
