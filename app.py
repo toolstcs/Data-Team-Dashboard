@@ -1003,6 +1003,7 @@ body{{font-family:'Inter',sans-serif;background:var(--bg);color:var(--txt);line-
 .bc{{display:flex;flex-direction:column;gap:10px}}
 .br{{display:grid;grid-template-columns:150px 1fr 80px 80px;align-items:center;gap:14px;padding:5px 0;border-radius:8px;transition:background .15s}}
 .br.hm{{grid-template-columns:150px 1fr 80px 80px 90px 90px}}
+.br.pcol{{grid-template-columns:150px 1fr 90px}}
 .br:hover{{background:rgba(0,0,0,.02)}}
 .bl{{font-size:13px;font-weight:600;color:var(--txt);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}}
 .bt{{height:30px;background:var(--bg-el);border-radius:8px;overflow:hidden}}
@@ -1013,6 +1014,7 @@ body{{font-family:'Inter',sans-serif;background:var(--bg);color:var(--txt);line-
 .bch{{font-size:10px;font-weight:700;color:var(--txt-m);text-transform:uppercase;letter-spacing:.5px;text-align:right}}.bch.l{{text-align:left}}
 .tr{{display:grid;grid-template-columns:150px 1fr 80px 80px;align-items:center;gap:14px;margin-top:16px;padding-top:16px;border-top:2px solid var(--accent)}}
 .tr.hm{{grid-template-columns:150px 1fr 80px 80px 90px 90px}}
+.tr.pcol{{grid-template-columns:150px 1fr 90px}}
 .tr .bl{{font-weight:900;color:var(--accent);font-size:14px}}.tr .bv{{font-weight:900;color:var(--accent)}}.tr .bv.sec{{color:var(--accent2)}}
 .olt{{display:inline-block;padding:2px 8px;border-radius:5px;font-size:9px;font-weight:700;background:rgba(249,115,22,.12);color:#F97316;border:1px solid rgba(249,115,22,.3);margin-left:6px}}
 .mt{{display:inline-flex;background:var(--bg-el);border-radius:8px;padding:2px;border:1px solid var(--bdr);margin-left:12px}}
@@ -1092,23 +1094,33 @@ let rw=b.rows.map(r=>{{let mv='',nv='';if(hM&&mkt.by_tech[r.label]){{const mt=mk
 let tm='',tn='';if(hM){{tm=fmt(mF==='all'?mkt.total:mF==='opener'?mkt.openers:mkt.non_openers);tn=fmt(mkt.new_total)}}
 let tot=`<div class="tr ${{mc}}"><div class="bl">TOTAL</div><div></div><div class="bv">${{fmt(b.totals.leads)}}</div><div class="bv sec">${{fmt(b.totals.websites)}}</div>${{hM?`<div class="bv mkt">${{tm}}</div><div class="bv new">${{tn}}</div>`:''}}</div>`;
 main=st+`<div class="pn"><div style="display:flex;align-items:center;flex-wrap:wrap;margin-bottom:22px"><div class="pt" style="margin:0">${{b.colLabel}} Breakdown</div>${{mtg}}</div><div class="bc">${{hd}}${{rw}}${{tot}}</div></div>`;
-// ConversionBox: stack the "200+ Products" section (banded by Product Count)
-// below the competitors breakdown. Pulled live from HubSpot (Option A), since
-// the Drive CSV has no Product Count column. Sub-200 and blanks are excluded
-// upstream, so these bars only ever show contacts with 200+ products.
+// ConversionBox: competitors on the LEFT, "200+ Products" on the RIGHT, 50-50.
+// Products are pulled live from HubSpot (Option A); the CSV has no Product
+// Count column. Sub-200 and blanks are excluded upstream. The products panel
+// has NO Sites column: the HubSpot count API returns totals only, so a Sites
+// number would always be a meaningless 0.
 if(aB==='conversionbox'){{
 const hasProd = PRODUCTS && PRODUCTS.rows && PRODUCTS.rows.length && PRODUCTS.totals.leads>0;
+
+// Left panel: the competitors breakdown already built above as `main`, minus
+// the leading stat cards (st) which stay at the top spanning both columns.
+const leftPanel = `<div class="pn" style="margin:0"><div style="display:flex;align-items:center;flex-wrap:wrap;margin-bottom:22px"><div class="pt" style="margin:0">${{b.colLabel}} Breakdown</div>${{mtg}}</div><div class="bc">${{hd}}${{rw}}${{tot}}</div></div>`;
+
+let rightPanel;
 if(hasProd){{
+// 3-column grid (label, bar, leads): no Sites column.
 const pr=PRODUCTS.rows;const pMax=Math.max(...pr.map(r=>r.leads),1);
-const pHead=`<div class="br" style="margin-bottom:4px"><div class="bch l">Product Count</div><div></div><div class="bch">Leads</div><div class="bch">Sites</div></div>`;
-const pRows=pr.map(r=>`<div class="br"><div class="bl">${{r.label}}</div><div class="bt"><div class="bf" style="width:${{(r.leads/pMax*100).toFixed(1)}}%;background:var(--grad-bar)"></div></div><div class="bv">${{fmt(r.leads)}}</div><div class="bv sec">${{fmt(r.websites)}}</div></div>`).join('');
-const pTot=`<div class="tr"><div class="bl">TOTAL</div><div></div><div class="bv">${{fmt(PRODUCTS.totals.leads)}}</div><div class="bv sec">${{fmt(PRODUCTS.totals.websites)}}</div></div>`;
-main+=`<div class="pn"><div class="pt">200+ Products <span style="font-size:12px;font-weight:600;color:var(--txt-m)">(live from HubSpot, under 200 excluded)</span></div><div class="bc">${{pHead}}${{pRows}}${{pTot}}</div></div>`;
+const pHead=`<div class="br pcol" style="margin-bottom:4px"><div class="bch l">Product Count</div><div></div><div class="bch">Leads</div></div>`;
+const pRows=pr.map(r=>`<div class="br pcol"><div class="bl">${{r.label}}</div><div class="bt"><div class="bf" style="width:${{(r.leads/pMax*100).toFixed(1)}}%;background:var(--grad-bar)"></div></div><div class="bv">${{fmt(r.leads)}}</div></div>`).join('');
+const pTot=`<div class="tr pcol"><div class="bl">TOTAL</div><div></div><div class="bv">${{fmt(PRODUCTS.totals.leads)}}</div></div>`;
+rightPanel=`<div class="pn" style="margin:0"><div class="pt">&#128230; 200+ Products <span style="font-size:12px;font-weight:600;color:var(--txt-m)">(live, under 200 excluded)</span></div><div class="bc">${{pHead}}${{pRows}}${{pTot}}</div></div>`;
 }}else{{
-// Do not vanish silently. Say why the section is empty, using the resolver note.
 const why = (PRODUCTS && PRODUCTS.note) ? PRODUCTS.note : 'no data returned';
-main+=`<div class="pn"><div class="pt">200+ Products <span style="font-size:12px;font-weight:600;color:var(--txt-m)">(live from HubSpot)</span></div><div class="nd" style="text-align:left;padding:20px 4px">No Product Count data loaded.<br><span style="font-size:12px;color:var(--txt-m)">Resolver: ${{why}}</span><br><span style="font-size:12px;color:var(--txt-m)">If this says NOT FOUND, the Product Count property name is different, or the HubSpot key is missing in Streamlit Secrets.</span></div></div>`;
+rightPanel=`<div class="pn" style="margin:0"><div class="pt">&#128230; 200+ Products <span style="font-size:12px;font-weight:600;color:var(--txt-m)">(live from HubSpot)</span></div><div class="nd" style="text-align:left;padding:20px 4px">No Product Count data loaded.<br><span style="font-size:12px;color:var(--txt-m)">Resolver: ${{why}}</span><br><span style="font-size:12px;color:var(--txt-m)">If this says NOT FOUND, the Product Count property name is different, or the HubSpot key is missing in Streamlit Secrets.</span></div></div>`;
 }}
+
+// Replace the single stacked panel with the two side-by-side panels.
+main=st+`<div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:28px">${{leftPanel}}${{rightPanel}}</div>`;
 }}
 // BinaryWorks split: show Drupal and WordPress side by side
 if(aB==='drupal'){{
