@@ -225,6 +225,53 @@ def hs_product_band_count(prop, lo, hi):
     return hs_search_count(filters)
 
 
+def fetch_product_bands_live():
+    """
+    Fetch ONLY the ConversionBox "200+ Products" bands, live from HubSpot.
+
+    This is the Option A path: everything else on the dashboard comes from the
+    Google Drive CSV, but Product Count is read live from the API on every load,
+    because the CSV export does not carry that column. Four API calls, one per
+    band. Returns the same {rows, totals, note} shape the CSV path would have
+    produced, so build_html does not care where it came from.
+    """
+    import time
+    out = {"rows": [], "totals": {"leads": 0, "websites": 0}, "note": ""}
+
+    if not HUBSPOT_SERVICE_KEY:
+        out["note"] = "no HubSpot key set, 200+ Products cannot load"
+        return out
+
+    pc, note = resolve_product_count_prop()
+    out["note"] = note
+    if not pc:
+        return out
+
+    total = 0
+    for band in PRODUCT_BANDS:
+        c = hs_product_band_count(pc, band["lo"], band["hi"])
+        # Keep every band, even zero, so the section shows the full ladder.
+        out["rows"].append({"label": band["label"], "leads": c, "websites": 0, "emails": []})
+        total += c
+        time.sleep(0.3)
+    out["totals"]["leads"] = total
+    return out
+
+
+@st.cache_data(ttl=1800, show_spinner=False)
+def cached_product_bands():
+    """
+    Live product bands, cached for 30 minutes.
+
+    Streamlit reruns the whole script on every widget interaction. Without this
+    cache, opening a month row or switching a brand tab would refire the four
+    Product Count API calls each time. The cache key is the function itself
+    (no args), so all sessions share one 30-minute result. The Refresh button,
+    which clears caches, still forces a fresh pull.
+    """
+    return fetch_product_bands_live()
+
+
 def fetch_hubspot_counts():
     """Fetch live counts from HubSpot Search API."""
     import time
@@ -841,6 +888,13 @@ def load_all():
         if cb_mkt:
             data["email_mkt"]["conversionbox"] = cb_mkt
 
+    # Option A: the Product Count column is not in the Drive CSV, so the 200+
+    # Products section is pulled LIVE from HubSpot on every load. Cached so a
+    # normal Streamlit rerun (any button click) does not refire the 4 API calls.
+    live_products = cached_product_bands()
+    if live_products and live_products["rows"]:
+        data["products"] = live_products
+
     contrib = parse_contribution()
     data["persons"] = contrib.get("persons", {})
     data["sales"] = contrib.get("sales", {})
@@ -1039,14 +1093,22 @@ let tm='',tn='';if(hM){{tm=fmt(mF==='all'?mkt.total:mF==='opener'?mkt.openers:mk
 let tot=`<div class="tr ${{mc}}"><div class="bl">TOTAL</div><div></div><div class="bv">${{fmt(b.totals.leads)}}</div><div class="bv sec">${{fmt(b.totals.websites)}}</div>${{hM?`<div class="bv mkt">${{tm}}</div><div class="bv new">${{tn}}</div>`:''}}</div>`;
 main=st+`<div class="pn"><div style="display:flex;align-items:center;flex-wrap:wrap;margin-bottom:22px"><div class="pt" style="margin:0">${{b.colLabel}} Breakdown</div>${{mtg}}</div><div class="bc">${{hd}}${{rw}}${{tot}}</div></div>`;
 // ConversionBox: stack the "200+ Products" section (banded by Product Count)
-// below the competitors breakdown. Blanks and sub-200 contacts are already
-// excluded upstream, so these bars only ever show contacts with 200+ products.
-if(aB==='conversionbox' && PRODUCTS && PRODUCTS.rows && PRODUCTS.rows.length){{
+// below the competitors breakdown. Pulled live from HubSpot (Option A), since
+// the Drive CSV has no Product Count column. Sub-200 and blanks are excluded
+// upstream, so these bars only ever show contacts with 200+ products.
+if(aB==='conversionbox'){{
+const hasProd = PRODUCTS && PRODUCTS.rows && PRODUCTS.rows.length && PRODUCTS.totals.leads>0;
+if(hasProd){{
 const pr=PRODUCTS.rows;const pMax=Math.max(...pr.map(r=>r.leads),1);
 const pHead=`<div class="br" style="margin-bottom:4px"><div class="bch l">Product Count</div><div></div><div class="bch">Leads</div><div class="bch">Sites</div></div>`;
 const pRows=pr.map(r=>`<div class="br"><div class="bl">${{r.label}}</div><div class="bt"><div class="bf" style="width:${{(r.leads/pMax*100).toFixed(1)}}%;background:var(--grad-bar)"></div></div><div class="bv">${{fmt(r.leads)}}</div><div class="bv sec">${{fmt(r.websites)}}</div></div>`).join('');
 const pTot=`<div class="tr"><div class="bl">TOTAL</div><div></div><div class="bv">${{fmt(PRODUCTS.totals.leads)}}</div><div class="bv sec">${{fmt(PRODUCTS.totals.websites)}}</div></div>`;
-main+=`<div class="pn"><div class="pt">200+ Products <span style="font-size:12px;font-weight:600;color:var(--txt-m)">(by product count, under 200 excluded)</span></div><div class="bc">${{pHead}}${{pRows}}${{pTot}}</div></div>`;
+main+=`<div class="pn"><div class="pt">200+ Products <span style="font-size:12px;font-weight:600;color:var(--txt-m)">(live from HubSpot, under 200 excluded)</span></div><div class="bc">${{pHead}}${{pRows}}${{pTot}}</div></div>`;
+}}else{{
+// Do not vanish silently. Say why the section is empty, using the resolver note.
+const why = (PRODUCTS && PRODUCTS.note) ? PRODUCTS.note : 'no data returned';
+main+=`<div class="pn"><div class="pt">200+ Products <span style="font-size:12px;font-weight:600;color:var(--txt-m)">(live from HubSpot)</span></div><div class="nd" style="text-align:left;padding:20px 4px">No Product Count data loaded.<br><span style="font-size:12px;color:var(--txt-m)">Resolver: ${{why}}</span><br><span style="font-size:12px;color:var(--txt-m)">If this says NOT FOUND, the Product Count property name is different, or the HubSpot key is missing in Streamlit Secrets.</span></div></div>`;
+}}
 }}
 // BinaryWorks split: show Drupal and WordPress side by side
 if(aB==='drupal'){{
