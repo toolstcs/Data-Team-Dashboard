@@ -41,13 +41,16 @@ PRODUCT_COUNT_LABEL = "Product Count"
 
 # Bands for the ConversionBox "200+ Products" section. Contacts with Product
 # Count below 200 are dropped entirely. Bands are inclusive on both ends and do
-# not overlap, so every kept contact lands in exactly one band. hi = None means
-# open-ended (the top band).
+# not overlap (each starts one above where the last ended), so every kept
+# contact lands in exactly one band. hi = None means open-ended (the top band).
 PRODUCT_COUNT_MIN = 200
 PRODUCT_BANDS = [
-    {"label": "200 - 999", "lo": 200, "hi": 999},
-    {"label": "1K - 9,999", "lo": 1000, "hi": 9999},
-    {"label": "10K - 99,999", "lo": 10000, "hi": 99999},
+    {"label": "200 - 499", "lo": 200, "hi": 499},
+    {"label": "500 - 999", "lo": 500, "hi": 999},
+    {"label": "1K - 4,999", "lo": 1000, "hi": 4999},
+    {"label": "5K - 9,999", "lo": 5000, "hi": 9999},
+    {"label": "10K - 49,999", "lo": 10000, "hi": 49999},
+    {"label": "50K - 99,999", "lo": 50000, "hi": 99999},
     {"label": "100K+", "lo": 100000, "hi": None},
 ]
 
